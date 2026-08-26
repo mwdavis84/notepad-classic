@@ -15,8 +15,18 @@ concurrency:
 
 jobs:
   build-test:
-    name: Build and Test
+    name: Build and Test (${{ matrix.arch }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+            run_tests: true
+          - target: aarch64-pc-windows-msvc
+            arch: arm64
+            run_tests: false
 
     steps:
       - name: Checkout repository
@@ -25,23 +35,32 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          targets: ${{ matrix.target }}
           components: rustfmt, clippy
 
       - name: Check formatting
+        if: matrix.arch == 'x64'
         run: cargo fmt --check
 
       - name: Run tests
-        run: cargo test --locked
+        if: matrix.run_tests
+        run: cargo test --locked --target ${{ matrix.target }}
 
       - name: Lint with Clippy
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --target ${{ matrix.target }} --all-targets --all-features -- -D warnings
 
       - name: Debug build
-        run: cargo build --locked
+        run: cargo build --locked --target ${{ matrix.target }}
 
       - name: Release build
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package MSIX
-        run: powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -SkipBuild
+        run: powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -Target ${{ matrix.target }} -SkipBuild
+
+      - name: Upload MSIX Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: notepad-classic-${{ matrix.arch }}-msix
+          path: target/notepad-classic_*_${{ matrix.arch }}.msix
 

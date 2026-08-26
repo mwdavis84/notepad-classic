@@ -44,40 +44,45 @@ fn find_resource_compiler() -> Result<PathBuf, String> {
         }
     }
 
-    let target_arch = env::var("CARGO_CFG_TARGET_ARCH")
-        .map_err(|_| "Cargo did not set CARGO_CFG_TARGET_ARCH".to_owned())?;
-    let architecture = match target_arch.as_str() {
-        "x86" => "x86",
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        other => {
-            return Err(format!(
-                "unsupported Windows target architecture {other:?}; set RC to a compatible resource compiler"
-            ));
-        }
-    };
-
     if let Some(path) = find_on_path("rc.exe") {
         return Ok(path);
     }
 
+    let host_arch = match env::consts::ARCH {
+        "x86" => "x86",
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        _ => "x64",
+    };
+
+    let candidate_architectures: &[&str] = match host_arch {
+        "x64" => &["x64", "x86"],
+        "arm64" => &["arm64", "x64", "x86"],
+        "x86" => &["x86"],
+        _ => &["x64", "x86"],
+    };
+
     if let Some(root) = env::var_os("WindowsSdkVerBinPath") {
-        let candidate = PathBuf::from(root).join(architecture).join("rc.exe");
-        if candidate.is_file() {
-            return Ok(candidate);
+        for &arch in candidate_architectures {
+            let candidate = PathBuf::from(&root).join(arch).join("rc.exe");
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
         }
     }
 
     if let (Some(root), Ok(version)) = (env::var_os("WindowsSdkDir"), env::var("WindowsSDKVersion"))
     {
         let version = version.trim_end_matches(['\\', '/']);
-        let candidate = PathBuf::from(root)
-            .join("bin")
-            .join(version)
-            .join(architecture)
-            .join("rc.exe");
-        if candidate.is_file() {
-            return Ok(candidate);
+        for &arch in candidate_architectures {
+            let candidate = PathBuf::from(&root)
+                .join("bin")
+                .join(version)
+                .join(arch)
+                .join("rc.exe");
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
         }
     }
 
@@ -100,15 +105,19 @@ fn find_resource_compiler() -> Result<PathBuf, String> {
         .collect::<Vec<_>>();
     versions.sort_by(|left, right| right.0.cmp(&left.0));
 
-    versions
-        .into_iter()
-        .map(|(_, version)| version.join(architecture).join("rc.exe"))
-        .find(|path| path.is_file())
-        .ok_or_else(|| {
-            format!(
-                "unable to find rc.exe for Windows architecture {architecture}; install/configure the Windows SDK or set RC"
-            )
-        })
+    for (_, version) in versions {
+        for &arch in candidate_architectures {
+            let candidate = version.join(arch).join("rc.exe");
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    Err(
+        "unable to find a runnable rc.exe in the Windows SDK; install the Windows SDK or set RC"
+            .to_owned(),
+    )
 }
 
 fn find_on_path(name: &str) -> Option<PathBuf> {
