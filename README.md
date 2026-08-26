@@ -35,3 +35,22 @@ Windows Notepad default. It can be changed for the current run with
 New documents are saved as UTF-8 without a BOM. Existing UTF-8, UTF-8 BOM, and
 UTF-16 LE BOM files retain their encoding when saved. Other input is decoded
 with the active Windows ANSI code page and saved as UTF-8.
+
+## MSIX Packaging (Microsoft Store & Sideloading)
+
+To build a Windows Store-compatible `.msix` package:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\package-msix.ps1
+```
+
+The unsigned package is written to `target\notepad-classic_<version>_x64.msix`, ready for direct submission to [Microsoft Partner Center](https://partner.microsoft.com/) (Microsoft signs the package during Store ingestion).
+
+### Local testing
+
+To build and sign the package with a local self-signed certificate for immediate installation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -SignForLocalTesting
+```
+
