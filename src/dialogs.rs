@@ -16,19 +16,22 @@ use windows_sys::Win32::UI::Controls::Dialogs::{
     CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST,
     OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
+use windows_sys::Win32::UI::Controls::{NM_CLICK, NM_RETURN, NMHDR, NMLINK};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, SystemParametersInfoForDpi};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, SetFocus};
+use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BS_DEFPUSHBUTTON, CREATESTRUCTW, CS_DBLCLKS, CreateWindowExW, DefWindowProcW, DestroyWindow,
-    DispatchMessageW, ES_AUTOHSCROLL, ES_NUMBER, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW,
-    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, IDC_ARROW, IDCANCEL, IDNO, IDOK, IDYES,
-    IsDialogMessageW, LoadCursorW, MB_ICONERROR, MB_ICONQUESTION, MB_ICONWARNING, MB_OK, MB_YESNO,
-    MB_YESNOCANCEL, MSG, MessageBoxW, MoveWindow, NONCLIENTMETRICSW, PostQuitMessage,
-    RegisterClassW, SPI_GETNONCLIENTMETRICS, SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER,
-    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
-    WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DPICHANGED, WM_NCCREATE,
-    WM_NCDESTROY, WM_SETFONT, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_CONTROLPARENT,
-    WS_EX_DLGMODALFRAME, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    BS_DEFPUSHBUTTON, CREATESTRUCTW, CS_DBLCLKS, CreateWindowExW, DefWindowProcW, DestroyIcon,
+    DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, ES_NUMBER, EnumChildWindows, GWLP_HINSTANCE,
+    GWLP_USERDATA, GetDlgItem, GetMessageW, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, HICON, IDC_ARROW, IDCANCEL, IDNO, IDOK, IDYES, IMAGE_ICON, IsDialogMessageW,
+    LR_DEFAULTCOLOR, LoadCursorW, LoadImageW, MB_ICONERROR, MB_ICONQUESTION, MB_ICONWARNING, MB_OK,
+    MB_YESNO, MB_YESNOCANCEL, MSG, MessageBoxW, MoveWindow, NONCLIENTMETRICSW, PostQuitMessage,
+    RegisterClassW, SPI_GETNONCLIENTMETRICS, STM_SETICON, SW_SHOW, SW_SHOWNORMAL, SWP_NOACTIVATE,
+    SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    TranslateMessage, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DPICHANGED,
+    WM_NCCREATE, WM_NCDESTROY, WM_NOTIFY, WM_SETFONT, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
+    WS_EX_CONTROLPARENT, WS_EX_DLGMODALFRAME, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
 const FILE_BUFFER_LEN: usize = 32_768;
@@ -475,6 +478,10 @@ fn layout_goto(state: &GotoState) {
 }
 
 fn create_goto_font(dpi: u32) -> HFONT {
+    create_dialog_font(dpi)
+}
+
+fn create_dialog_font(dpi: u32) -> HFONT {
     let mut metrics: NONCLIENTMETRICSW = unsafe { zeroed() };
     metrics.cbSize = size_of::<NONCLIENTMETRICSW>() as u32;
     let succeeded = unsafe {
@@ -525,6 +532,443 @@ fn replace_goto_font(state: &GotoState) {
     }
 }
 
+const SS_ICON: u32 = 0x0000_0003;
+const APP_ICON_RESOURCE_ID: usize = 1;
+const ID_ABOUT_APP_NAME: usize = 1001;
+const ID_ABOUT_PUBLISHER: usize = 1002;
+
+struct AboutState {
+    hwnd: Cell<HWND>,
+    close_button: Cell<HWND>,
+    icon_control: Cell<HWND>,
+    link_controls: [Cell<HWND>; 3],
+    owned_font: Cell<HFONT>,
+    owned_icon: Cell<HICON>,
+    done: Cell<bool>,
+}
+
+pub fn show_about(owner: HWND, instance: HINSTANCE) {
+    let class_name = to_wide("NotepadClassicAboutDialog");
+    let class = WNDCLASSW {
+        style: 0,
+        lpfnWndProc: Some(about_window_proc),
+        hInstance: instance,
+        hCursor: unsafe { LoadCursorW(null_mut(), IDC_ARROW) },
+        hbrBackground: unsafe { GetSysColorBrush(COLOR_BTNFACE) },
+        lpszClassName: class_name.as_ptr(),
+        ..unsafe { zeroed() }
+    };
+    unsafe { RegisterClassW(&class) };
+
+    let dpi = unsafe { GetDpiForWindow(owner) }.max(96);
+    let mut state = Box::new(AboutState {
+        hwnd: Cell::new(null_mut()),
+        close_button: Cell::new(null_mut()),
+        icon_control: Cell::new(null_mut()),
+        link_controls: [
+            Cell::new(null_mut()),
+            Cell::new(null_mut()),
+            Cell::new(null_mut()),
+        ],
+        owned_font: Cell::new(null_mut()),
+        owned_icon: Cell::new(null_mut()),
+        done: Cell::new(false),
+    });
+
+    unsafe { EnableWindow(owner, 0) };
+
+    let mut owner_rect: RECT = unsafe { zeroed() };
+    unsafe { GetWindowRect(owner, &mut owner_rect) };
+    let width = scale_for_dpi(380, dpi);
+    let height = scale_for_dpi(260, dpi);
+    let x = owner_rect.left + ((owner_rect.right - owner_rect.left - width) / 2).max(0);
+    let y = owner_rect.top + ((owner_rect.bottom - owner_rect.top - height) / 2).max(0);
+    let title = to_wide("About Notepad Classic");
+    let state_pointer = (&mut *state) as *mut AboutState;
+
+    let hwnd = unsafe {
+        CreateWindowExW(
+            WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT,
+            class_name.as_ptr(),
+            title.as_ptr(),
+            WS_POPUP | WS_CAPTION | WS_SYSMENU,
+            x,
+            y,
+            width,
+            height,
+            owner,
+            null_mut(),
+            instance,
+            state_pointer.cast(),
+        )
+    };
+
+    if hwnd.is_null() {
+        unsafe {
+            EnableWindow(owner, 1);
+            SetForegroundWindow(owner);
+        }
+        return;
+    }
+
+    unsafe {
+        ShowWindow(hwnd, SW_SHOW);
+        UpdateWindow(hwnd);
+        SetFocus(state.close_button.get());
+    }
+
+    let mut message: MSG = unsafe { zeroed() };
+    loop {
+        if state.done.get() {
+            break;
+        }
+        let status = unsafe { GetMessageW(&mut message, null_mut(), 0, 0) };
+        if status <= 0 {
+            if status == 0 {
+                unsafe { PostQuitMessage(message.wParam as i32) };
+            }
+            if !state.done.get() {
+                state.done.set(true);
+                unsafe { DestroyWindow(hwnd) };
+            }
+            break;
+        }
+        if unsafe { IsDialogMessageW(hwnd, &message) } == 0 {
+            unsafe {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+    }
+    unsafe {
+        EnableWindow(owner, 1);
+        SetForegroundWindow(owner);
+    }
+}
+
+unsafe extern "system" fn about_window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if message == WM_NCCREATE {
+        let create = lparam as *const CREATESTRUCTW;
+        let state = unsafe { (*create).lpCreateParams.cast::<AboutState>() };
+        unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize) };
+        return 1;
+    }
+    let state_pointer = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const AboutState;
+    let Some(state) = (unsafe { state_pointer.as_ref() }) else {
+        return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
+    };
+
+    match message {
+        WM_CREATE => {
+            state.hwnd.set(hwnd);
+            let instance = unsafe { (*(lparam as *const CREATESTRUCTW)).hInstance };
+            let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
+
+            let icon_control =
+                create_child(hwnd, "STATIC", "", WS_VISIBLE | SS_ICON, 0, 0, 0, 0, 0);
+            state.icon_control.set(icon_control);
+
+            let app_version = format!("Notepad Classic\nVersion {}", env!("CARGO_PKG_VERSION"));
+            let app_name_control = create_child(
+                hwnd,
+                "STATIC",
+                &app_version,
+                WS_VISIBLE,
+                0,
+                0,
+                0,
+                0,
+                ID_ABOUT_APP_NAME,
+            );
+
+            let publisher_control = create_child(
+                hwnd,
+                "STATIC",
+                "Publisher: DeekFit\nReleased under the MIT License.",
+                WS_VISIBLE,
+                0,
+                0,
+                0,
+                0,
+                ID_ABOUT_PUBLISHER,
+            );
+
+            let link1 = create_child(
+                hwnd,
+                "SysLink",
+                "<a href=\"https://github.com/mwdavis84/notepad-classic\">GitHub Repository</a>",
+                WS_VISIBLE | WS_TABSTOP,
+                0,
+                0,
+                0,
+                0,
+                0,
+            );
+            let link2 = create_child(
+                hwnd,
+                "SysLink",
+                "<a href=\"https://github.com/mwdavis84/notepad-classic/blob/main/LICENSE\">MIT License</a>",
+                WS_VISIBLE | WS_TABSTOP,
+                0,
+                0,
+                0,
+                0,
+                0,
+            );
+            let link3 = create_child(
+                hwnd,
+                "SysLink",
+                "<a href=\"https://threads.com/@deekfit_apps\">Follow @deekfit_apps on Threads</a>",
+                WS_VISIBLE | WS_TABSTOP,
+                0,
+                0,
+                0,
+                0,
+                0,
+            );
+            state.link_controls[0].set(link1);
+            state.link_controls[1].set(link2);
+            state.link_controls[2].set(link3);
+
+            let close_button = create_child(
+                hwnd,
+                "BUTTON",
+                "Close",
+                WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON as u32,
+                0,
+                0,
+                0,
+                0,
+                IDCANCEL as usize,
+            );
+            state.close_button.set(close_button);
+
+            if icon_control.is_null()
+                || app_name_control.is_null()
+                || publisher_control.is_null()
+                || link1.is_null()
+                || link2.is_null()
+                || link3.is_null()
+                || close_button.is_null()
+            {
+                return -1;
+            }
+
+            layout_about(state, dpi);
+            replace_about_font(state, dpi);
+            replace_about_icon(state, instance, dpi);
+            0
+        }
+        WM_NOTIFY => {
+            let nmhdr = unsafe { &*(lparam as *const NMHDR) };
+            if nmhdr.code == NM_CLICK || nmhdr.code == NM_RETURN {
+                let nmlink = unsafe { &*(lparam as *const NMLINK) };
+                let url = &nmlink.item.szUrl;
+                let result = unsafe {
+                    ShellExecuteW(
+                        hwnd,
+                        to_wide("open").as_ptr(),
+                        url.as_ptr(),
+                        null_mut(),
+                        null_mut(),
+                        SW_SHOWNORMAL,
+                    )
+                };
+                if (result as isize) <= 32 {
+                    show_error(Some(hwnd), "Notepad Classic", "Unable to open the link.");
+                }
+                0
+            } else {
+                unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+            }
+        }
+        WM_COMMAND => {
+            let id = (wparam & 0xFFFF) as i32;
+            if id == IDOK || id == IDCANCEL {
+                state.done.set(true);
+                unsafe { DestroyWindow(hwnd) };
+            }
+            0
+        }
+        WM_CLOSE => {
+            state.done.set(true);
+            unsafe { DestroyWindow(hwnd) };
+            0
+        }
+        WM_DPICHANGED => {
+            let suggested = unsafe { *(lparam as *const RECT) };
+            let dpi = ((wparam >> 16) as u16 as u32).max(96);
+            unsafe {
+                SetWindowPos(
+                    hwnd,
+                    null_mut(),
+                    suggested.left,
+                    suggested.top,
+                    suggested.right - suggested.left,
+                    suggested.bottom - suggested.top,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+            layout_about(state, dpi);
+            replace_about_font(state, dpi);
+            let instance = unsafe { GetWindowLongPtrW(hwnd, GWLP_HINSTANCE) as HINSTANCE };
+            replace_about_icon(state, instance, dpi);
+            0
+        }
+        WM_NCDESTROY => {
+            unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) };
+            state.hwnd.set(null_mut());
+            state.close_button.set(null_mut());
+            state.icon_control.set(null_mut());
+            state.link_controls[0].set(null_mut());
+            state.link_controls[1].set(null_mut());
+            state.link_controls[2].set(null_mut());
+            state.done.set(true);
+            let font = state.owned_font.replace(null_mut());
+            if !font.is_null() {
+                unsafe { DeleteObject(font) };
+            }
+            let icon = state.owned_icon.replace(null_mut());
+            if !icon.is_null() {
+                unsafe { DestroyIcon(icon) };
+            }
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+        }
+        _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
+    }
+}
+
+fn layout_about(state: &AboutState, dpi: u32) {
+    let hwnd = state.hwnd.get();
+    let app_name = unsafe { GetDlgItem(hwnd, ID_ABOUT_APP_NAME as i32) };
+    let publisher = unsafe { GetDlgItem(hwnd, ID_ABOUT_PUBLISHER as i32) };
+    let icon_size = scale_for_dpi(32, dpi);
+
+    let controls = [
+        (
+            state.icon_control.get(),
+            scale_for_dpi(20, dpi),
+            scale_for_dpi(20, dpi),
+            icon_size,
+            icon_size,
+        ),
+        (
+            app_name,
+            scale_for_dpi(68, dpi),
+            scale_for_dpi(16, dpi),
+            scale_for_dpi(280, dpi),
+            scale_for_dpi(34, dpi),
+        ),
+        (
+            publisher,
+            scale_for_dpi(68, dpi),
+            scale_for_dpi(56, dpi),
+            scale_for_dpi(280, dpi),
+            scale_for_dpi(34, dpi),
+        ),
+        (
+            state.link_controls[0].get(),
+            scale_for_dpi(68, dpi),
+            scale_for_dpi(96, dpi),
+            scale_for_dpi(280, dpi),
+            scale_for_dpi(18, dpi),
+        ),
+        (
+            state.link_controls[1].get(),
+            scale_for_dpi(68, dpi),
+            scale_for_dpi(118, dpi),
+            scale_for_dpi(280, dpi),
+            scale_for_dpi(18, dpi),
+        ),
+        (
+            state.link_controls[2].get(),
+            scale_for_dpi(68, dpi),
+            scale_for_dpi(140, dpi),
+            scale_for_dpi(280, dpi),
+            scale_for_dpi(18, dpi),
+        ),
+        (
+            state.close_button.get(),
+            scale_for_dpi(275, dpi),
+            scale_for_dpi(172, dpi),
+            scale_for_dpi(75, dpi),
+            scale_for_dpi(26, dpi),
+        ),
+    ];
+
+    for (control, x, y, width, height) in controls {
+        if !control.is_null() {
+            unsafe {
+                MoveWindow(control, x, y, width, height, 1);
+            }
+        }
+    }
+}
+
+unsafe extern "system" fn set_child_font(child: HWND, lparam: LPARAM) -> i32 {
+    unsafe {
+        SendMessageW(child, WM_SETFONT, lparam as usize, 1);
+    }
+    1
+}
+
+fn replace_about_font(state: &AboutState, dpi: u32) {
+    let font = create_dialog_font(dpi);
+    if font.is_null() {
+        return;
+    }
+    let hwnd = state.hwnd.get();
+    if !hwnd.is_null() {
+        unsafe {
+            EnumChildWindows(hwnd, Some(set_child_font), font as isize);
+        }
+    }
+    if state.done.get() {
+        unsafe { DeleteObject(font) };
+        return;
+    }
+    let previous = state.owned_font.replace(font);
+    if !previous.is_null() {
+        unsafe { DeleteObject(previous) };
+    }
+}
+
+fn replace_about_icon(state: &AboutState, instance: HINSTANCE, dpi: u32) {
+    let size = scale_for_dpi(32, dpi).max(1);
+    let icon = unsafe {
+        LoadImageW(
+            instance,
+            APP_ICON_RESOURCE_ID as *const u16,
+            IMAGE_ICON,
+            size,
+            size,
+            LR_DEFAULTCOLOR,
+        ) as HICON
+    };
+    if icon.is_null() {
+        return;
+    }
+    let icon_control = state.icon_control.get();
+    if !icon_control.is_null() {
+        unsafe {
+            SendMessageW(icon_control, STM_SETICON, icon as usize, 0);
+        }
+    }
+    if state.done.get() {
+        unsafe { DestroyIcon(icon) };
+        return;
+    }
+    let previous = state.owned_icon.replace(icon);
+    if !previous.is_null() {
+        unsafe { DestroyIcon(previous) };
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn create_child(
     parent: HWND,
@@ -571,5 +1015,50 @@ mod tests {
         assert_eq!(wide.last(), Some(&0));
         let round_trip = OsString::from_wide(&wide[..wide.len() - 1]);
         assert_eq!(round_trip.encode_wide().collect::<Vec<_>>(), units);
+    }
+
+    #[test]
+    fn scale_for_dpi_scales_proportionally() {
+        // 96 DPI (100% scale)
+        assert_eq!(scale_for_dpi(380, 96), 380);
+        assert_eq!(scale_for_dpi(260, 96), 260);
+        assert_eq!(scale_for_dpi(32, 96), 32);
+
+        // 120 DPI (125% scale)
+        assert_eq!(scale_for_dpi(380, 120), 475);
+        assert_eq!(scale_for_dpi(260, 120), 325);
+        assert_eq!(scale_for_dpi(32, 120), 40);
+
+        // 144 DPI (150% scale)
+        assert_eq!(scale_for_dpi(380, 144), 570);
+        assert_eq!(scale_for_dpi(260, 144), 390);
+        assert_eq!(scale_for_dpi(32, 144), 48);
+
+        // 192 DPI (200% scale)
+        assert_eq!(scale_for_dpi(380, 192), 760);
+        assert_eq!(scale_for_dpi(260, 192), 520);
+        assert_eq!(scale_for_dpi(32, 192), 64);
+    }
+
+    #[test]
+    fn about_dialog_hyperlinks_are_valid_syslink_markup() {
+        let links = [
+            "<a href=\"https://github.com/mwdavis84/notepad-classic\">GitHub Repository</a>",
+            "<a href=\"https://github.com/mwdavis84/notepad-classic/blob/main/LICENSE\">MIT License</a>",
+            "<a href=\"https://threads.com/@deekfit_apps\">Follow @deekfit_apps on Threads</a>",
+        ];
+
+        for link in links {
+            assert!(link.starts_with("<a href=\"https://"));
+            assert!(link.ends_with("</a>"));
+            assert!(link.contains("\">"));
+        }
+    }
+
+    #[test]
+    fn about_dialog_app_version_string_matches_package() {
+        let app_version = format!("Notepad Classic\nVersion {}", env!("CARGO_PKG_VERSION"));
+        assert!(app_version.starts_with("Notepad Classic\nVersion "));
+        assert!(!env!("CARGO_PKG_VERSION").is_empty());
     }
 }

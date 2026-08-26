@@ -24,8 +24,8 @@ use windows_sys::Win32::UI::Controls::Dialogs::{
 };
 use windows_sys::Win32::UI::Controls::{
     EM_GETLINECOUNT, EM_GETSEL, EM_LINEFROMCHAR, EM_LINEINDEX, EM_REPLACESEL, EM_SCROLLCARET,
-    EM_SETLIMITTEXT, EM_SETMODIFY, EM_SETSEL, ICC_BAR_CLASSES, INITCOMMONCONTROLSEX,
-    InitCommonControlsEx, SB_SETTEXTW, STATUSCLASSNAMEW,
+    EM_SETLIMITTEXT, EM_SETMODIFY, EM_SETSEL, ICC_BAR_CLASSES, ICC_LINK_CLASS,
+    INITCOMMONCONTROLSEX, InitCommonControlsEx, SB_SETTEXTW, STATUSCLASSNAMEW,
 };
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
@@ -79,6 +79,7 @@ const ID_EDIT_FIND_PREVIOUS: usize = 1111;
 const ID_FORMAT_WRAP: usize = 1200;
 const ID_FORMAT_FONT: usize = 1201;
 const ID_VIEW_STATUS: usize = 1300;
+const ID_HELP_ABOUT: usize = 1400;
 const WM_APP_UPDATE_STATUS: u32 = WM_APP + 1;
 const FIND_OPTION_FLAGS: u32 = FR_DOWN | FR_MATCHCASE | FR_WHOLEWORD;
 
@@ -169,7 +170,7 @@ pub fn run() -> Result<(), String> {
     }
     let controls = INITCOMMONCONTROLSEX {
         dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32,
-        dwICC: ICC_BAR_CLASSES,
+        dwICC: ICC_BAR_CLASSES | ICC_LINK_CLASS,
     };
     unsafe { InitCommonControlsEx(&controls) };
 
@@ -570,7 +571,14 @@ fn create_menu() -> Result<HMENU, String> {
         let edit = CreatePopupMenu();
         let format = CreatePopupMenu();
         let view = CreatePopupMenu();
-        if bar.is_null() || file.is_null() || edit.is_null() || format.is_null() || view.is_null() {
+        let help = CreatePopupMenu();
+        if bar.is_null()
+            || file.is_null()
+            || edit.is_null()
+            || format.is_null()
+            || view.is_null()
+            || help.is_null()
+        {
             return Err(dialogs::os_error("Unable to create the menu"));
         }
         append(file, ID_FILE_NEW, "&New\tCtrl+N");
@@ -600,10 +608,13 @@ fn create_menu() -> Result<HMENU, String> {
         append(format, ID_FORMAT_FONT, "&Font...");
         append(view, ID_VIEW_STATUS, "&Status Bar");
 
+        append(help, ID_HELP_ABOUT, "&About Notepad Classic");
+
         append_popup(bar, file, "&File");
         append_popup(bar, edit, "&Edit");
         append_popup(bar, format, "F&ormat");
         append_popup(bar, view, "&View");
+        append_popup(bar, help, "&Help");
         Ok(bar)
     }
 }
@@ -698,6 +709,7 @@ fn handle_command(state: &AppState, id: usize) {
         ID_FORMAT_WRAP => toggle_word_wrap(state),
         ID_FORMAT_FONT => choose_font(state),
         ID_VIEW_STATUS => toggle_status(state),
+        ID_HELP_ABOUT => dialogs::show_about(state.hwnd.get(), state.instance),
         _ => {}
     }
 }
