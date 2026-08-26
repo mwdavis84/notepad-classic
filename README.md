@@ -7,8 +7,9 @@ system.
 
 ## Build
 
-Install the current stable Rust MSVC toolchain and the Visual Studio Build Tools
-with the **Desktop development with C++** workload, then run on Windows:
+Install Rust 1.85 or newer with the MSVC toolchain and the Visual Studio Build
+Tools with the **Desktop development with C++** workload, then run on Windows.
+Rust 1.85 is the minimum because the project uses Edition 2024.
 
 ```powershell
 cargo build --release

@@ -2,6 +2,7 @@
 name = "notepad-classic"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 description = "A tiny native Win32 text editor"
 license = "MIT"
 

@@ -1,7 +1,10 @@
-use std::ffi::c_void;
+use std::cell::{Cell, RefCell, UnsafeCell};
+use std::ffi::{OsStr, OsString, c_void};
 use std::mem::{size_of, zeroed};
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
+use std::rc::Rc;
 
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, SYSTEMTIME, WPARAM};
 use windows_sys::Win32::Globalization::{
@@ -79,67 +82,83 @@ const ID_VIEW_STATUS: usize = 1300;
 const WM_APP_UPDATE_STATUS: u32 = WM_APP + 1;
 const FIND_OPTION_FLAGS: u32 = FR_DOWN | FR_MATCHCASE | FR_WHOLEWORD;
 
+#[derive(Clone, Copy)]
+struct FontChoice {
+    logical: LOGFONTW,
+    point_size_tenths: i32,
+}
+
 struct AppState {
     instance: HINSTANCE,
-    hwnd: HWND,
-    editor: HWND,
-    status: HWND,
+    hwnd: Cell<HWND>,
+    editor: Cell<HWND>,
+    status: Cell<HWND>,
     menu: HMENU,
-    path: Option<PathBuf>,
-    format: TextFormat,
-    dirty: bool,
-    suppress_change: bool,
-    word_wrap: bool,
-    status_requested: bool,
-    owned_font: HFONT,
+    path: RefCell<Option<PathBuf>>,
+    format: Cell<TextFormat>,
+    dirty: Cell<bool>,
+    suppress_change: Cell<bool>,
+    word_wrap: Cell<bool>,
+    status_requested: Cell<bool>,
+    owned_font: Cell<HFONT>,
+    dpi: Cell<u32>,
+    font_choice: Cell<FontChoice>,
     find_message: u32,
-    find_dialog: HWND,
-    find_data: Option<Box<FINDREPLACEW>>,
-    find_flags: u32,
-    find_text: Box<[u16; 256]>,
-    replace_text: Box<[u16; 256]>,
+    find_dialog: Cell<HWND>,
+    find_data: RefCell<Option<Box<FINDREPLACEW>>>,
+    find_flags: Cell<u32>,
+    find_text: UnsafeCell<[u16; 256]>,
+    replace_text: UnsafeCell<[u16; 256]>,
 }
 
 impl AppState {
-    fn new(instance: HINSTANCE, find_message: u32) -> Self {
+    fn new(instance: HINSTANCE, menu: HMENU, find_message: u32) -> Self {
         Self {
             instance,
-            hwnd: null_mut(),
-            editor: null_mut(),
-            status: null_mut(),
-            menu: null_mut(),
-            path: None,
-            format: TextFormat::default(),
-            dirty: false,
-            suppress_change: false,
-            word_wrap: false,
-            status_requested: true,
-            owned_font: null_mut(),
+            hwnd: Cell::new(null_mut()),
+            editor: Cell::new(null_mut()),
+            status: Cell::new(null_mut()),
+            menu,
+            path: RefCell::new(None),
+            format: Cell::new(TextFormat::default()),
+            dirty: Cell::new(false),
+            suppress_change: Cell::new(false),
+            word_wrap: Cell::new(false),
+            status_requested: Cell::new(true),
+            owned_font: Cell::new(null_mut()),
+            dpi: Cell::new(96),
+            font_choice: Cell::new(default_font_choice()),
             find_message,
-            find_dialog: null_mut(),
-            find_data: None,
-            find_flags: FR_DOWN,
-            find_text: Box::new([0; 256]),
-            replace_text: Box::new([0; 256]),
+            find_dialog: Cell::new(null_mut()),
+            find_data: RefCell::new(None),
+            find_flags: Cell::new(FR_DOWN),
+            find_text: UnsafeCell::new([0; 256]),
+            replace_text: UnsafeCell::new([0; 256]),
         }
     }
 
-    fn display_name(&self) -> String {
+    fn display_name(&self) -> OsString {
         self.path
+            .borrow()
             .as_deref()
             .and_then(Path::file_name)
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled".to_owned())
+            .map(OsStr::to_os_string)
+            .unwrap_or_else(|| OsString::from("Untitled"))
     }
 
     fn set_title(&self) {
-        let marker = if self.dirty { "*" } else { "" };
-        let title = dialogs::to_wide(&format!("{marker}{} - {APP_NAME}", self.display_name()));
-        unsafe { SetWindowTextW(self.hwnd, title.as_ptr()) };
+        let mut title = Vec::new();
+        if self.dirty.get() {
+            title.push(b'*' as u16);
+        }
+        title.extend(self.display_name().encode_wide());
+        title.extend(" - Notepad Classic".encode_utf16());
+        title.push(0);
+        unsafe { SetWindowTextW(self.hwnd.get(), title.as_ptr()) };
     }
 
     fn status_is_visible(&self) -> bool {
-        self.status_requested && !self.word_wrap
+        self.status_requested.get() && !self.word_wrap.get()
     }
 }
 
@@ -187,9 +206,7 @@ pub fn run() -> Result<(), String> {
     }
 
     let menu = create_menu()?;
-    let mut state = Box::new(AppState::new(instance, find_message));
-    state.menu = menu;
-    let state_pointer = Box::into_raw(state);
+    let state = Rc::new(AppState::new(instance, menu, find_message));
     let title = dialogs::to_wide("Untitled - Notepad Classic");
     let hwnd = unsafe {
         CreateWindowExW(
@@ -204,11 +221,10 @@ pub fn run() -> Result<(), String> {
             null_mut(),
             menu,
             instance,
-            state_pointer.cast(),
+            Rc::as_ptr(&state).cast_mut().cast(),
         )
     };
     if hwnd.is_null() {
-        unsafe { drop(Box::from_raw(state_pointer)) };
         return Err(dialogs::os_error("Unable to create the main window"));
     }
 
@@ -219,11 +235,7 @@ pub fn run() -> Result<(), String> {
 
     if let Some(argument) = std::env::args_os().nth(1) {
         let path = PathBuf::from(argument);
-        unsafe {
-            if let Some(state) = state_from_hwnd(hwnd) {
-                open_command_line_path(state, path);
-            }
-        }
+        open_command_line_path(&state, path);
     }
 
     let accelerator = create_accelerators()?;
@@ -238,11 +250,7 @@ pub fn run() -> Result<(), String> {
             break;
         }
 
-        let find_dialog = unsafe {
-            state_from_hwnd(hwnd)
-                .map(|state| state.find_dialog)
-                .unwrap_or(null_mut())
-        };
+        let find_dialog = state.find_dialog.get();
         if !find_dialog.is_null() && unsafe { IsDialogMessageW(find_dialog, &message) } != 0 {
             continue;
         }
@@ -276,23 +284,26 @@ unsafe extern "system" fn window_proc(
         let create = lparam as *const CREATESTRUCTW;
         let state = unsafe { (*create).lpCreateParams.cast::<AppState>() };
         unsafe {
-            (*state).hwnd = hwnd;
+            (*state).hwnd.set(hwnd);
+            // `run` owns one `Rc`; this increment creates the distinct strong
+            // reference owned by the raw pointer in `GWLP_USERDATA`.
+            Rc::increment_strong_count(state);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize);
         }
         return 1;
     }
 
-    let Some(state) = (unsafe { state_from_hwnd(hwnd) }) else {
+    let Some(state) = (unsafe { clone_state_from_hwnd(hwnd) }) else {
         return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
     };
 
     if message == state.find_message {
-        handle_find_message(state, lparam as *const FINDREPLACEW);
+        handle_find_message(&state, lparam as *const FINDREPLACEW);
         return 0;
     }
 
     match message {
-        WM_CREATE => match create_children(state) {
+        WM_CREATE => match create_children(&state) {
             Ok(()) => {
                 unsafe { DragAcceptFiles(hwnd, 1) };
                 state.set_title();
@@ -304,72 +315,94 @@ unsafe extern "system" fn window_proc(
             }
         },
         WM_SIZE => {
-            layout_children(state);
+            layout_children(&state);
+            0
+        }
+        WM_DPICHANGED => {
+            handle_dpi_changed(&state, wparam, lparam);
             0
         }
         WM_SETFOCUS => {
-            unsafe { SetFocus(state.editor) };
+            unsafe { SetFocus(state.editor.get()) };
             0
         }
         WM_COMMAND => {
             let id = wparam & 0xFFFF;
             let notification = (wparam >> 16) & 0xFFFF;
             if id == ID_EDITOR && notification == EN_CHANGE as usize {
-                if !state.suppress_change {
-                    state.dirty = true;
+                if !state.suppress_change.get() {
+                    state.dirty.set(true);
                     state.set_title();
                 }
-                update_status(state);
+                update_status(&state);
             } else {
-                handle_command(state, id);
+                handle_command(&state, id);
             }
             0
         }
         WM_DROPFILES => {
-            handle_drop(state, wparam as HDROP);
+            handle_drop(&state, wparam as HDROP);
             0
         }
         WM_CLOSE => {
-            if maybe_save(state) {
+            if maybe_save(&state) {
                 unsafe { DestroyWindow(hwnd) };
             }
             0
         }
         WM_APP_UPDATE_STATUS => {
-            update_status(state);
+            update_status(&state);
             0
         }
         WM_DESTROY => {
-            if !state.find_dialog.is_null() {
-                unsafe { DestroyWindow(state.find_dialog) };
-                state.find_dialog = null_mut();
+            let find_dialog = state.find_dialog.replace(null_mut());
+            if !find_dialog.is_null() {
+                unsafe { DestroyWindow(find_dialog) };
             }
             unsafe { PostQuitMessage(0) };
             0
         }
         WM_NCDESTROY => {
-            if !state.owned_font.is_null() {
-                unsafe { DeleteObject(state.owned_font) };
-                state.owned_font = null_mut();
-            }
+            let stored = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const AppState;
             unsafe {
+                // Clearing userdata prevents new lookups. This consumes exactly
+                // the window-owned count created during `WM_NCCREATE`; `state`
+                // and any outer handlers retain their temporary strong counts.
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-                drop(Box::from_raw(state as *mut AppState));
-                DefWindowProcW(hwnd, message, wparam, lparam)
+                if !stored.is_null() {
+                    drop(Rc::from_raw(stored));
+                }
             }
+            state.hwnd.set(null_mut());
+            let owned_font = state.owned_font.replace(null_mut());
+            if !owned_font.is_null() {
+                unsafe { DeleteObject(owned_font) };
+            }
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
         }
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
     }
 }
 
-unsafe fn state_from_hwnd(hwnd: HWND) -> Option<&'static mut AppState> {
-    let pointer = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut AppState;
-    unsafe { pointer.as_mut() }
+unsafe fn clone_state_from_hwnd(hwnd: HWND) -> Option<Rc<AppState>> {
+    let pointer = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const AppState;
+    if pointer.is_null() {
+        return None;
+    }
+    // The stored raw pointer owns a strong count. Increment before reconstructing
+    // so this temporary `Rc` cannot consume the window-owned reference.
+    unsafe {
+        Rc::increment_strong_count(pointer);
+        Some(Rc::from_raw(pointer))
+    }
 }
 
-fn create_children(state: &mut AppState) -> Result<(), String> {
-    state.editor = create_editor(state)?;
-    state.status = unsafe {
+fn create_children(state: &AppState) -> Result<(), String> {
+    let dpi = unsafe { GetDpiForWindow(state.hwnd.get()) }.max(96);
+    state.dpi.set(dpi);
+    let editor = create_editor(state)?;
+    state.editor.set(editor);
+    let status = unsafe {
         CreateWindowExW(
             0,
             STATUSCLASSNAMEW,
@@ -379,25 +412,32 @@ fn create_children(state: &mut AppState) -> Result<(), String> {
             0,
             0,
             0,
-            state.hwnd,
+            state.hwnd.get(),
             ID_STATUS as *mut c_void,
             state.instance,
             null_mut(),
         )
     };
-    if state.status.is_null() {
+    if status.is_null() {
         return Err(dialogs::os_error("Unable to create the status bar"));
     }
+    state.status.set(status);
     unsafe {
-        SendMessageW(state.editor, EM_SETLIMITTEXT, 0x7FFF_FFFE, 0);
-        let default_font = create_default_editor_font(state.hwnd);
+        SendMessageW(editor, EM_SETLIMITTEXT, 0x7FFF_FFFE, 0);
+        let default_font = create_editor_font(state.font_choice.get(), dpi);
         let font = if default_font.is_null() {
             GetStockObject(DEFAULT_GUI_FONT) as HFONT
         } else {
-            state.owned_font = default_font;
             default_font
         };
-        SendMessageW(state.editor, WM_SETFONT, font as usize, 1);
+        SendMessageW(editor, WM_SETFONT, font as usize, 1);
+        if !default_font.is_null() {
+            if state.hwnd.get().is_null() {
+                DeleteObject(default_font);
+            } else {
+                state.owned_font.set(default_font);
+            }
+        }
     }
     update_menu_state(state);
     update_status(state);
@@ -413,7 +453,7 @@ fn create_editor(state: &AppState) -> Result<HWND, String> {
         | ES_AUTOVSCROLL as u32
         | ES_NOHIDESEL as u32
         | ES_WANTRETURN as u32;
-    if !state.word_wrap {
+    if !state.word_wrap.get() {
         style |= WS_HSCROLL | ES_AUTOHSCROLL as u32;
     }
     let editor = unsafe {
@@ -426,7 +466,7 @@ fn create_editor(state: &AppState) -> Result<HWND, String> {
             0,
             0,
             0,
-            state.hwnd,
+            state.hwnd.get(),
             ID_EDITOR as *mut c_void,
             state.instance,
             null_mut(),
@@ -439,10 +479,8 @@ fn create_editor(state: &AppState) -> Result<HWND, String> {
     }
 }
 
-fn create_default_editor_font(hwnd: HWND) -> HFONT {
-    let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
+fn default_font_choice() -> FontChoice {
     let mut logical: LOGFONTW = unsafe { zeroed() };
-    logical.lfHeight = -((10 * dpi as i32 + 36) / 72);
     logical.lfWeight = FW_NORMAL as i32;
     logical.lfCharSet = DEFAULT_CHARSET;
     logical.lfQuality = CLEARTYPE_QUALITY;
@@ -450,35 +488,78 @@ fn create_default_editor_font(hwnd: HWND) -> HFONT {
     let face = dialogs::to_wide("Lucida Console");
     let count = face.len().min(logical.lfFaceName.len());
     logical.lfFaceName[..count].copy_from_slice(&face[..count]);
+    FontChoice {
+        logical,
+        point_size_tenths: 100,
+    }
+}
+
+fn create_editor_font(choice: FontChoice, dpi: u32) -> HFONT {
+    let mut logical = choice.logical;
+    logical.lfHeight = -((choice.point_size_tenths * dpi as i32 + 360) / 720).max(1);
+    logical.lfWidth = 0;
     unsafe { CreateFontIndirectW(&logical) }
 }
 
+fn replace_editor_font(state: &AppState, dpi: u32) -> bool {
+    let font = create_editor_font(state.font_choice.get(), dpi);
+    if font.is_null() {
+        return false;
+    }
+    let editor = state.editor.get();
+    unsafe { SendMessageW(editor, WM_SETFONT, font as usize, 1) };
+    if state.hwnd.get().is_null() {
+        unsafe { DeleteObject(font) };
+        return false;
+    }
+    let previous = state.owned_font.replace(font);
+    if !previous.is_null() {
+        unsafe { DeleteObject(previous) };
+    }
+    true
+}
+
+fn handle_dpi_changed(state: &AppState, wparam: WPARAM, lparam: LPARAM) {
+    let suggested = unsafe { *(lparam as *const RECT) };
+    let dpi = ((wparam >> 16) as u16 as u32).max(96);
+    unsafe {
+        SetWindowPos(
+            state.hwnd.get(),
+            null_mut(),
+            suggested.left,
+            suggested.top,
+            suggested.right - suggested.left,
+            suggested.bottom - suggested.top,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+    state.dpi.set(dpi);
+    replace_editor_font(state, dpi);
+    layout_children(state);
+}
+
 fn layout_children(state: &AppState) {
+    let hwnd = state.hwnd.get();
+    let editor = state.editor.get();
+    let status = state.status.get();
     let mut client: RECT = unsafe { zeroed() };
-    unsafe { GetClientRect(state.hwnd, &mut client) };
+    unsafe { GetClientRect(hwnd, &mut client) };
     let width = client.right - client.left;
     let height = client.bottom - client.top;
     let status_height = if state.status_is_visible() {
         unsafe {
-            ShowWindow(state.status, SW_SHOW);
-            SendMessageW(state.status, WM_SIZE, 0, 0);
+            ShowWindow(status, SW_SHOW);
+            SendMessageW(status, WM_SIZE, 0, 0);
         }
         let mut status_rect: RECT = unsafe { zeroed() };
-        unsafe { GetWindowRect(state.status, &mut status_rect) };
+        unsafe { GetWindowRect(status, &mut status_rect) };
         status_rect.bottom - status_rect.top
     } else {
-        unsafe { ShowWindow(state.status, SW_HIDE) };
+        unsafe { ShowWindow(status, SW_HIDE) };
         0
     };
     unsafe {
-        MoveWindow(
-            state.editor,
-            0,
-            0,
-            width,
-            (height - status_height).max(0),
-            1,
-        );
+        MoveWindow(editor, 0, 0, width, (height - status_height).max(0), 1);
     }
 }
 
@@ -576,7 +657,7 @@ const fn accel(modifiers: u8, key: u8, command: usize) -> ACCEL {
     }
 }
 
-fn handle_command(state: &mut AppState, id: usize) {
+fn handle_command(state: &AppState, id: usize) {
     match id {
         ID_FILE_NEW => new_document(state),
         ID_FILE_OPEN => open_document(state),
@@ -587,22 +668,22 @@ fn handle_command(state: &mut AppState, id: usize) {
             save_document(state, true);
         }
         ID_FILE_EXIT => unsafe {
-            SendMessageW(state.hwnd, WM_CLOSE, 0, 0);
+            SendMessageW(state.hwnd.get(), WM_CLOSE, 0, 0);
         },
         ID_EDIT_UNDO => unsafe {
-            SendMessageW(state.editor, WM_UNDO, 0, 0);
+            SendMessageW(state.editor.get(), WM_UNDO, 0, 0);
         },
         ID_EDIT_CUT => unsafe {
-            SendMessageW(state.editor, WM_CUT, 0, 0);
+            SendMessageW(state.editor.get(), WM_CUT, 0, 0);
         },
         ID_EDIT_COPY => unsafe {
-            SendMessageW(state.editor, WM_COPY, 0, 0);
+            SendMessageW(state.editor.get(), WM_COPY, 0, 0);
         },
         ID_EDIT_PASTE => unsafe {
-            SendMessageW(state.editor, WM_PASTE, 0, 0);
+            SendMessageW(state.editor.get(), WM_PASTE, 0, 0);
         },
         ID_EDIT_DELETE => unsafe {
-            SendMessageW(state.editor, WM_CLEAR, 0, 0);
+            SendMessageW(state.editor.get(), WM_CLEAR, 0, 0);
         },
         ID_EDIT_FIND => show_find_dialog(state, false),
         ID_EDIT_FIND_NEXT => find_next(state),
@@ -610,7 +691,7 @@ fn handle_command(state: &mut AppState, id: usize) {
         ID_EDIT_REPLACE => show_find_dialog(state, true),
         ID_EDIT_GOTO => go_to_line(state),
         ID_EDIT_SELECT_ALL => {
-            unsafe { SendMessageW(state.editor, EM_SETSEL, 0, -1) };
+            unsafe { SendMessageW(state.editor.get(), EM_SETSEL, 0, -1) };
             update_status(state);
         }
         ID_EDIT_TIME_DATE => insert_time_date(state),
@@ -621,49 +702,51 @@ fn handle_command(state: &mut AppState, id: usize) {
     }
 }
 
-fn new_document(state: &mut AppState) {
+fn new_document(state: &AppState) {
     if !maybe_save(state) {
         return;
     }
-    state.path = None;
-    state.format = TextFormat::default();
+    *state.path.borrow_mut() = None;
+    state.format.set(TextFormat::default());
     set_editor_text(state, "");
-    state.dirty = false;
+    state.dirty.set(false);
     state.set_title();
 }
 
-fn open_document(state: &mut AppState) {
+fn open_document(state: &AppState) {
     if !maybe_save(state) {
         return;
     }
-    match dialogs::open_file(state.hwnd) {
+    let hwnd = state.hwnd.get();
+    match dialogs::open_file(hwnd) {
         Ok(Some(path)) => open_path(state, path),
         Ok(None) => {}
-        Err(message) => dialogs::show_error(Some(state.hwnd), APP_NAME, &message),
+        Err(message) => dialogs::show_error(Some(hwnd), APP_NAME, &message),
     }
 }
 
-fn open_command_line_path(state: &mut AppState, path: PathBuf) {
+fn open_command_line_path(state: &AppState, path: PathBuf) {
     if path.is_file() {
         open_path(state, path);
     } else if !path.exists() {
-        if dialogs::confirm_create(state.hwnd, &path.to_string_lossy()) {
-            state.path = Some(path);
-            state.format = TextFormat::default();
-            state.dirty = false;
+        if dialogs::confirm_create(state.hwnd.get(), &path) {
+            *state.path.borrow_mut() = Some(path);
+            state.format.set(TextFormat::default());
+            state.dirty.set(false);
             set_editor_text(state, "");
             state.set_title();
         }
     } else {
-        dialogs::show_error(
-            Some(state.hwnd),
+        dialogs::show_error_with_path(
+            Some(state.hwnd.get()),
             APP_NAME,
-            &format!("The command-line path is not a file:\n\n{}", path.display()),
+            "The command-line path is not a file:\n\n",
+            &path,
         );
     }
 }
 
-fn open_path(state: &mut AppState, path: PathBuf) {
+fn open_path(state: &AppState, path: PathBuf) {
     match file::load(&path) {
         Ok(loaded) => {
             let mut text = loaded.text;
@@ -671,52 +754,64 @@ fn open_path(state: &mut AppState, path: PathBuf) {
                 && current_time_date()
                     .is_some_and(|timestamp| append_log_entry(&mut text, &timestamp));
             set_editor_text(state, &text);
-            state.path = Some(path);
-            state.format = loaded.format;
-            state.dirty = appended_log_entry;
+            *state.path.borrow_mut() = Some(path);
+            state.format.set(loaded.format);
+            state.dirty.set(appended_log_entry);
             if appended_log_entry {
                 let end = text.encode_utf16().count();
                 unsafe {
-                    SendMessageW(state.editor, EM_SETMODIFY, 1, 0);
-                    SendMessageW(state.editor, EM_SETSEL, end, end as isize);
-                    SendMessageW(state.editor, EM_SCROLLCARET, 0, 0);
+                    let editor = state.editor.get();
+                    SendMessageW(editor, EM_SETMODIFY, 1, 0);
+                    SendMessageW(editor, EM_SETSEL, end, end as isize);
+                    SendMessageW(editor, EM_SCROLLCARET, 0, 0);
                 }
             }
             state.set_title();
             update_status(state);
         }
         Err(error) => dialogs::show_error(
-            Some(state.hwnd),
+            Some(state.hwnd.get()),
             APP_NAME,
             &format!("Could not open the file:\n\n{error}"),
         ),
     }
 }
 
-fn save_document(state: &mut AppState, force_dialog: bool) -> bool {
-    let path = if force_dialog || state.path.is_none() {
-        match dialogs::save_file(state.hwnd, state.path.as_deref()) {
+fn save_document(state: &AppState, force_dialog: bool) -> bool {
+    let current_path = state.path.borrow().clone();
+    let hwnd = state.hwnd.get();
+    let path = if force_dialog {
+        match dialogs::save_file(hwnd, current_path.as_deref()) {
             Ok(Some(path)) => path,
             Ok(None) => return false,
             Err(message) => {
-                dialogs::show_error(Some(state.hwnd), APP_NAME, &message);
+                dialogs::show_error(Some(hwnd), APP_NAME, &message);
                 return false;
             }
         }
+    } else if let Some(path) = current_path {
+        path
     } else {
-        state.path.clone().unwrap()
+        match dialogs::save_file(hwnd, None) {
+            Ok(Some(path)) => path,
+            Ok(None) => return false,
+            Err(message) => {
+                dialogs::show_error(Some(hwnd), APP_NAME, &message);
+                return false;
+            }
+        }
     };
-    let text = get_editor_text(state.editor);
-    match file::save(&path, &text, state.format) {
+    let text = get_editor_text(state.editor.get());
+    match file::save(&path, &text, state.format.get()) {
         Ok(()) => {
-            state.path = Some(path);
-            state.dirty = false;
+            *state.path.borrow_mut() = Some(path);
+            state.dirty.set(false);
             state.set_title();
             true
         }
         Err(error) => {
             dialogs::show_error(
-                Some(state.hwnd),
+                Some(hwnd),
                 APP_NAME,
                 &format!("Could not save the file:\n\n{error}"),
             );
@@ -725,37 +820,51 @@ fn save_document(state: &mut AppState, force_dialog: bool) -> bool {
     }
 }
 
-fn maybe_save(state: &mut AppState) -> bool {
-    if !state.dirty {
+fn maybe_save(state: &AppState) -> bool {
+    if !state.dirty.get() {
         return true;
     }
-    match dialogs::confirm_save(state.hwnd, &state.display_name()) {
+    let display_name = state.display_name();
+    match dialogs::confirm_save(state.hwnd.get(), &display_name) {
         SaveDecision::Save => save_document(state, false),
         SaveDecision::Discard => true,
         SaveDecision::Cancel => false,
     }
 }
 
-fn set_editor_text(state: &mut AppState, text: &str) {
-    let wide = dialogs::to_wide(text);
-    state.suppress_change = true;
+fn set_editor_text(state: &AppState, text: &str) {
+    let wide: Vec<u16> = text.encode_utf16().collect();
+    set_editor_text_utf16(state, &wide);
+}
+
+fn set_editor_text_utf16(state: &AppState, text: &[u16]) {
+    let mut terminated = Vec::with_capacity(text.len() + 1);
+    terminated.extend_from_slice(text);
+    terminated.push(0);
+    let editor = state.editor.get();
+    state.suppress_change.set(true);
     unsafe {
-        SetWindowTextW(state.editor, wide.as_ptr());
-        SendMessageW(state.editor, EM_SETMODIFY, 0, 0);
-        SendMessageW(state.editor, EM_SETSEL, 0, 0);
+        SetWindowTextW(editor, terminated.as_ptr());
+        SendMessageW(editor, EM_SETMODIFY, 0, 0);
+        SendMessageW(editor, EM_SETSEL, 0, 0);
     }
-    state.suppress_change = false;
+    state.suppress_change.set(false);
     update_status(state);
 }
 
 fn get_editor_text(editor: HWND) -> String {
+    String::from_utf16_lossy(&get_editor_text_utf16(editor))
+}
+
+fn get_editor_text_utf16(editor: HWND) -> Vec<u16> {
     let length = unsafe { GetWindowTextLengthW(editor) };
     if length <= 0 {
-        return String::new();
+        return Vec::new();
     }
     let mut buffer = vec![0u16; length as usize + 1];
     let written = unsafe { GetWindowTextW(editor, buffer.as_mut_ptr(), buffer.len() as i32) };
-    String::from_utf16_lossy(&buffer[..written.max(0) as usize])
+    buffer.truncate(written.max(0) as usize);
+    buffer
 }
 
 fn selection(editor: HWND) -> (u32, u32) {
@@ -772,12 +881,12 @@ fn selection(editor: HWND) -> (u32, u32) {
     (start, end)
 }
 
-fn handle_drop(state: &mut AppState, drop: HDROP) {
+fn handle_drop(state: &AppState, drop: HDROP) {
     let length = unsafe { DragQueryFileW(drop, 0, null_mut(), 0) };
     if length > 0 {
         let mut buffer = vec![0u16; length as usize + 1];
         unsafe { DragQueryFileW(drop, 0, buffer.as_mut_ptr(), buffer.len() as u32) };
-        let path = PathBuf::from(String::from_utf16_lossy(&buffer[..length as usize]));
+        let path = PathBuf::from(OsString::from_wide(&buffer[..length as usize]));
         if maybe_save(state) {
             open_path(state, path);
         }
@@ -785,48 +894,49 @@ fn handle_drop(state: &mut AppState, drop: HDROP) {
     unsafe { DragFinish(drop) };
 }
 
-fn toggle_word_wrap(state: &mut AppState) {
-    let text = get_editor_text(state.editor);
-    let selected = selection(state.editor);
-    let font = unsafe { SendMessageW(state.editor, WM_GETFONT, 0, 0) } as HFONT;
-    state.word_wrap = !state.word_wrap;
-    state.suppress_change = true;
-    let old_editor = state.editor;
+fn toggle_word_wrap(state: &AppState) {
+    let old_editor = state.editor.get();
+    let text = get_editor_text_utf16(old_editor);
+    let selected = selection(old_editor);
+    let font = unsafe { SendMessageW(old_editor, WM_GETFONT, 0, 0) } as HFONT;
+    state.word_wrap.set(!state.word_wrap.get());
+    state.suppress_change.set(true);
     match create_editor(state) {
         Ok(new_editor) => {
-            state.editor = new_editor;
-            let wide = dialogs::to_wide(&text);
+            state.editor.set(new_editor);
+            let mut terminated = text;
+            terminated.push(0);
             unsafe {
                 SendMessageW(new_editor, EM_SETLIMITTEXT, 0x7FFF_FFFE, 0);
                 SendMessageW(new_editor, WM_SETFONT, font as usize, 1);
-                SetWindowTextW(new_editor, wide.as_ptr());
+                SetWindowTextW(new_editor, terminated.as_ptr());
                 SendMessageW(
                     new_editor,
                     EM_SETSEL,
                     selected.0 as usize,
                     selected.1 as isize,
                 );
-                SendMessageW(new_editor, EM_SETMODIFY, state.dirty as usize, 0);
+                SendMessageW(new_editor, EM_SETMODIFY, state.dirty.get() as usize, 0);
                 DestroyWindow(old_editor);
                 SetFocus(new_editor);
             }
         }
         Err(message) => {
-            state.word_wrap = !state.word_wrap;
-            dialogs::show_error(Some(state.hwnd), APP_NAME, &message);
+            state.word_wrap.set(!state.word_wrap.get());
+            dialogs::show_error(Some(state.hwnd.get()), APP_NAME, &message);
         }
     }
-    state.suppress_change = false;
+    state.suppress_change.set(false);
     update_menu_state(state);
     layout_children(state);
     update_status(state);
 }
 
-fn toggle_status(state: &mut AppState) {
-    if state.word_wrap {
+fn toggle_status(state: &AppState) {
+    if state.word_wrap.get() {
         return;
     }
-    state.status_requested = !state.status_requested;
+    state.status_requested.set(!state.status_requested.get());
     update_menu_state(state);
     layout_children(state);
 }
@@ -837,7 +947,7 @@ fn update_menu_state(state: &AppState) {
             state.menu,
             ID_FORMAT_WRAP as u32,
             MF_BYCOMMAND
-                | if state.word_wrap {
+                | if state.word_wrap.get() {
                     MF_CHECKED
                 } else {
                     MF_UNCHECKED
@@ -847,7 +957,7 @@ fn update_menu_state(state: &AppState) {
             state.menu,
             ID_VIEW_STATUS as u32,
             MF_BYCOMMAND
-                | if state.status_requested && !state.word_wrap {
+                | if state.status_requested.get() && !state.word_wrap.get() {
                     MF_CHECKED
                 } else {
                     MF_UNCHECKED
@@ -857,7 +967,7 @@ fn update_menu_state(state: &AppState) {
             state.menu,
             ID_VIEW_STATUS as u32,
             MF_BYCOMMAND
-                | if state.word_wrap {
+                | if state.word_wrap.get() {
                     MF_GRAYED
                 } else {
                     MF_ENABLED
@@ -867,30 +977,34 @@ fn update_menu_state(state: &AppState) {
             state.menu,
             ID_EDIT_GOTO as u32,
             MF_BYCOMMAND
-                | if state.word_wrap {
+                | if state.word_wrap.get() {
                     MF_GRAYED
                 } else {
                     MF_ENABLED
                 },
         );
-        DrawMenuBar(state.hwnd);
+        DrawMenuBar(state.hwnd.get());
     }
 }
 
 fn update_status(state: &AppState) {
-    if !state.status_is_visible() || state.editor.is_null() || state.status.is_null() {
+    let editor = state.editor.get();
+    let status = state.status.get();
+    if !state.status_is_visible() || editor.is_null() || status.is_null() {
         return;
     }
-    let (caret, _) = selection(state.editor);
-    let line = unsafe { SendMessageW(state.editor, EM_LINEFROMCHAR, caret as usize, 0) } as i32;
-    let line_start = unsafe { SendMessageW(state.editor, EM_LINEINDEX, line as usize, 0) } as i32;
+    let (caret, _) = selection(editor);
+    let line = unsafe { SendMessageW(editor, EM_LINEFROMCHAR, caret as usize, 0) } as i32;
+    let line_start = unsafe { SendMessageW(editor, EM_LINEINDEX, line as usize, 0) } as i32;
     let column = caret as i32 - line_start.max(0);
     let text = dialogs::to_wide(&format!("Ln {}, Col {}", line + 1, column + 1));
-    unsafe { SendMessageW(state.status, SB_SETTEXTW, 0, text.as_ptr() as isize) };
+    unsafe { SendMessageW(status, SB_SETTEXTW, 0, text.as_ptr() as isize) };
 }
 
-fn choose_font(state: &mut AppState) {
-    let current_font = unsafe { SendMessageW(state.editor, WM_GETFONT, 0, 0) } as HFONT;
+fn choose_font(state: &AppState) {
+    let editor = state.editor.get();
+    let hwnd = state.hwnd.get();
+    let current_font = unsafe { SendMessageW(editor, WM_GETFONT, 0, 0) } as HFONT;
     let mut logical: LOGFONTW = unsafe { zeroed() };
     if !current_font.is_null() {
         unsafe {
@@ -901,30 +1015,41 @@ fn choose_font(state: &mut AppState) {
             );
         }
     }
-    if !dialogs::choose_font(state.hwnd, &mut logical) {
+    let Some(point_size_tenths) = dialogs::choose_font(hwnd, &mut logical) else {
         return;
-    }
-    let font = unsafe { CreateFontIndirectW(&logical) };
+    };
+    logical.lfHeight = 0;
+    logical.lfWidth = 0;
+    let choice = FontChoice {
+        logical,
+        point_size_tenths,
+    };
+    let font = create_editor_font(choice, state.dpi.get());
     if font.is_null() {
         dialogs::show_error(
-            Some(state.hwnd),
+            Some(hwnd),
             APP_NAME,
             &dialogs::os_error("Unable to create the font"),
         );
         return;
     }
     unsafe {
-        SendMessageW(state.editor, WM_SETFONT, font as usize, 1);
-        if !state.owned_font.is_null() {
-            DeleteObject(state.owned_font);
+        SendMessageW(editor, WM_SETFONT, font as usize, 1);
+        if state.hwnd.get().is_null() {
+            DeleteObject(font);
+            return;
+        }
+        let previous = state.owned_font.replace(font);
+        if !previous.is_null() {
+            DeleteObject(previous);
         }
     }
-    state.owned_font = font;
+    state.font_choice.set(choice);
 }
 
 fn insert_time_date(state: &AppState) {
     if let Some(value) = current_time_date() {
-        replace_selection(state.editor, &value);
+        replace_selection(state.editor.get(), &value);
     }
 }
 
@@ -987,84 +1112,117 @@ fn replace_selection(editor: HWND, text: &str) {
     unsafe { SendMessageW(editor, EM_REPLACESEL, 1, wide.as_ptr() as isize) };
 }
 
+fn replace_selection_utf16(editor: HWND, text: &[u16]) {
+    let mut terminated = Vec::with_capacity(text.len() + 1);
+    terminated.extend_from_slice(text);
+    terminated.push(0);
+    unsafe { SendMessageW(editor, EM_REPLACESEL, 1, terminated.as_ptr() as isize) };
+}
+
 fn go_to_line(state: &AppState) {
-    if state.word_wrap {
+    if state.word_wrap.get() {
         return;
     }
-    let (caret, _) = selection(state.editor);
-    let current =
-        unsafe { SendMessageW(state.editor, EM_LINEFROMCHAR, caret as usize, 0) } as u32 + 1;
-    if let Some(line) = dialogs::go_to_line(state.hwnd, state.instance, current) {
-        let line_count = unsafe { SendMessageW(state.editor, EM_GETLINECOUNT, 0, 0) } as u32;
+    let editor = state.editor.get();
+    let hwnd = state.hwnd.get();
+    let (caret, _) = selection(editor);
+    let current = unsafe { SendMessageW(editor, EM_LINEFROMCHAR, caret as usize, 0) } as u32 + 1;
+    if let Some(line) = dialogs::go_to_line(hwnd, state.instance, current) {
+        let editor = state.editor.get();
+        let line_count = unsafe { SendMessageW(editor, EM_GETLINECOUNT, 0, 0) } as u32;
         if line == 0 || line > line_count {
             dialogs::show_error(
-                Some(state.hwnd),
+                Some(hwnd),
                 "Go To Line",
                 &format!("The line number must be between 1 and {line_count}."),
             );
             return;
         }
-        let index = unsafe { SendMessageW(state.editor, EM_LINEINDEX, (line - 1) as usize, 0) };
+        let index = unsafe { SendMessageW(editor, EM_LINEINDEX, (line - 1) as usize, 0) };
         unsafe {
-            SendMessageW(state.editor, EM_SETSEL, index as usize, index);
-            SendMessageW(state.editor, EM_SCROLLCARET, 0, 0);
-            SetFocus(state.editor);
+            SendMessageW(editor, EM_SETSEL, index as usize, index);
+            SendMessageW(editor, EM_SCROLLCARET, 0, 0);
+            SetFocus(editor);
         }
         update_status(state);
     }
 }
 
-fn show_find_dialog(state: &mut AppState, replace: bool) {
-    if !state.find_dialog.is_null() {
-        unsafe { SetForegroundWindow(state.find_dialog) };
+fn native_dialog_buffer(buffer: &UnsafeCell<[u16; 256]>) -> Vec<u16> {
+    // SAFETY: the modeless common dialog and all Rust access run on the same UI
+    // thread. No Win32 call can reenter while this in-place snapshot is copied.
+    let snapshot = unsafe { buffer.get().read() };
+    nul_terminated_slice(&snapshot).to_vec()
+}
+
+fn show_find_dialog(state: &AppState, replace: bool) {
+    let existing = state.find_dialog.get();
+    if !existing.is_null() {
+        unsafe { SetForegroundWindow(existing) };
         return;
     }
-    if state.find_text[0] == 0 {
-        let (start, end) = selection(state.editor);
+    let editor = state.editor.get();
+    if native_dialog_buffer(&state.find_text).is_empty() {
+        let (start, end) = selection(editor);
         if end > start && end - start < 256 {
-            let text: Vec<u16> = get_editor_text(state.editor).encode_utf16().collect();
-            let selected = &text[start as usize..end as usize];
-            state.find_text[..selected.len()].copy_from_slice(selected);
-            state.find_text[selected.len()] = 0;
+            let text = get_editor_text_utf16(editor);
+            if end as usize <= text.len() {
+                let selected = &text[start as usize..end as usize];
+                // SAFETY: no modeless dialog exists yet, and the `Rc<AppState>`
+                // allocation keeps this `UnsafeCell` at a stable address.
+                unsafe {
+                    let destination = state.find_text.get().cast::<u16>();
+                    destination.copy_from_nonoverlapping(selected.as_ptr(), selected.len());
+                    destination.add(selected.len()).write(0);
+                }
+            }
         }
     }
     let mut data = Box::<FINDREPLACEW>::default();
     data.lStructSize = size_of::<FINDREPLACEW>() as u32;
-    data.hwndOwner = state.hwnd;
-    data.Flags = state.find_flags;
-    data.lpstrFindWhat = state.find_text.as_mut_ptr();
-    data.wFindWhatLen = state.find_text.len() as u16;
-    data.lpstrReplaceWith = state.replace_text.as_mut_ptr();
-    data.wReplaceWithLen = state.replace_text.len() as u16;
-    state.find_data = Some(data);
-    let pointer = state.find_data.as_mut().unwrap().as_mut() as *mut FINDREPLACEW;
-    state.find_dialog = unsafe {
+    data.hwndOwner = state.hwnd.get();
+    data.Flags = state.find_flags.get();
+    // SAFETY: these pointers target the arrays in the stable `AppState`
+    // allocation. The arrays are never replaced while the dialog is alive.
+    data.lpstrFindWhat = state.find_text.get().cast::<u16>();
+    data.wFindWhatLen = 256;
+    data.lpstrReplaceWith = state.replace_text.get().cast::<u16>();
+    data.wReplaceWithLen = 256;
+    let pointer = {
+        let mut slot = state.find_data.borrow_mut();
+        *slot = Some(data);
+        slot.as_mut().unwrap().as_mut() as *mut FINDREPLACEW
+    };
+    // `pointer` remains stable in its `Box`; the RefCell borrow ended before
+    // entering the modeless common-dialog API.
+    let dialog = unsafe {
         if replace {
             ReplaceTextW(pointer)
         } else {
             FindTextW(pointer)
         }
     };
-    if state.find_dialog.is_null() {
-        state.find_data = None;
+    state.find_dialog.set(dialog);
+    if dialog.is_null() {
+        state.find_data.borrow_mut().take();
         dialogs::show_error(
-            Some(state.hwnd),
+            Some(state.hwnd.get()),
             APP_NAME,
             "Unable to open the Find dialog.",
         );
     }
 }
 
-fn handle_find_message(state: &mut AppState, data: *const FINDREPLACEW) {
+fn handle_find_message(state: &AppState, data: *const FINDREPLACEW) {
     if data.is_null() {
         return;
     }
     let flags = unsafe { (*data).Flags };
     if flags & FR_DIALOGTERM != 0 {
-        state.find_dialog = null_mut();
-        state.find_data = None;
+        state.find_dialog.set(null_mut());
+        state.find_data.borrow_mut().take();
     } else {
-        state.find_flags = flags & FIND_OPTION_FLAGS;
+        state.find_flags.set(flags & FIND_OPTION_FLAGS);
         if flags & FR_FINDNEXT != 0 {
             find_next_with_flags(state, flags);
         } else if flags & FR_REPLACE != 0 {
@@ -1075,58 +1233,54 @@ fn handle_find_message(state: &mut AppState, data: *const FINDREPLACEW) {
     }
 }
 
-fn find_next(state: &mut AppState) {
-    state.find_flags |= FR_DOWN;
-    if state.find_text[0] == 0 {
+fn find_next(state: &AppState) {
+    state.find_flags.set(state.find_flags.get() | FR_DOWN);
+    if native_dialog_buffer(&state.find_text).is_empty() {
         show_find_dialog(state, false);
         return;
     }
-    let flags = state.find_flags | FR_DOWN;
+    let flags = state.find_flags.get() | FR_DOWN;
     find_next_with_flags(state, flags);
 }
 
-fn find_previous(state: &mut AppState) {
-    state.find_flags &= !FR_DOWN;
-    if state.find_text[0] == 0 {
+fn find_previous(state: &AppState) {
+    state.find_flags.set(state.find_flags.get() & !FR_DOWN);
+    if native_dialog_buffer(&state.find_text).is_empty() {
         show_find_dialog(state, false);
         return;
     }
-    let flags = state.find_flags & !FR_DOWN;
+    let flags = state.find_flags.get() & !FR_DOWN;
     find_next_with_flags(state, flags);
 }
 
 fn find_next_with_flags(state: &AppState, flags: u32) -> bool {
-    let needle = nul_terminated_slice(state.find_text.as_ref());
+    let needle = native_dialog_buffer(&state.find_text);
     if needle.is_empty() {
         return false;
     }
-    let haystack: Vec<u16> = get_editor_text(state.editor).encode_utf16().collect();
-    let (start, end) = selection(state.editor);
+    let editor = state.editor.get();
+    let haystack = get_editor_text_utf16(editor);
+    let (start, end) = selection(editor);
     let found = if flags & FR_DOWN != 0 {
-        find_utf16(&haystack, needle, end as usize, true, flags)
+        find_utf16(&haystack, &needle, end as usize, true, flags)
     } else {
-        find_utf16(&haystack, needle, start as usize, false, flags)
+        find_utf16(&haystack, &needle, start as usize, false, flags)
     };
     if let Some(index) = found {
         unsafe {
-            SendMessageW(
-                state.editor,
-                EM_SETSEL,
-                index,
-                (index + needle.len()) as isize,
-            );
-            SendMessageW(state.editor, EM_SCROLLCARET, 0, 0);
-            SetFocus(state.editor);
+            SendMessageW(editor, EM_SETSEL, index, (index + needle.len()) as isize);
+            SendMessageW(editor, EM_SCROLLCARET, 0, 0);
+            SetFocus(editor);
         }
         update_status(state);
         true
     } else {
-        let find = String::from_utf16_lossy(needle);
+        let find = String::from_utf16_lossy(&needle);
         let message = dialogs::to_wide(&format!("Cannot find \"{find}\""));
         let title = dialogs::to_wide(APP_NAME);
         unsafe {
             MessageBoxW(
-                state.hwnd,
+                state.hwnd.get(),
                 message.as_ptr(),
                 title.as_ptr(),
                 MB_OK | MB_ICONINFORMATION,
@@ -1137,12 +1291,13 @@ fn find_next_with_flags(state: &AppState, flags: u32) -> bool {
 }
 
 fn replace_one(state: &AppState, flags: u32) {
-    let needle = nul_terminated_slice(state.find_text.as_ref());
-    let replacement = String::from_utf16_lossy(nul_terminated_slice(state.replace_text.as_ref()));
-    let (start, end) = selection(state.editor);
-    let text: Vec<u16> = get_editor_text(state.editor).encode_utf16().collect();
-    if selection_matches(&text, start as usize, end as usize, needle, flags) {
-        replace_selection(state.editor, &replacement);
+    let needle = native_dialog_buffer(&state.find_text);
+    let replacement = native_dialog_buffer(&state.replace_text);
+    let editor = state.editor.get();
+    let (start, end) = selection(editor);
+    let text = get_editor_text_utf16(editor);
+    if selection_matches(&text, start as usize, end as usize, &needle, flags) {
+        replace_selection_utf16(editor, &replacement);
     }
     find_next_with_flags(state, flags);
 }
@@ -1154,25 +1309,26 @@ fn selection_matches(text: &[u16], start: usize, end: usize, needle: &[u16], fla
         && (flags & FR_WHOLEWORD == 0 || whole_word_at(text, start, needle.len()))
 }
 
-fn replace_all(state: &mut AppState, flags: u32) {
-    let needle = nul_terminated_slice(state.find_text.as_ref()).to_vec();
-    let replacement = nul_terminated_slice(state.replace_text.as_ref()).to_vec();
+fn replace_all(state: &AppState, flags: u32) {
+    let needle = native_dialog_buffer(&state.find_text);
+    let replacement = native_dialog_buffer(&state.replace_text);
     if needle.is_empty() {
         return;
     }
-    let input: Vec<u16> = get_editor_text(state.editor).encode_utf16().collect();
+    let editor = state.editor.get();
+    let input = get_editor_text_utf16(editor);
     let (output, count) = replace_all_utf16(&input, &needle, &replacement, flags);
     if count > 0 {
-        set_editor_text(state, &String::from_utf16_lossy(&output));
-        state.dirty = true;
-        unsafe { SendMessageW(state.editor, EM_SETMODIFY, 1, 0) };
+        set_editor_text_utf16(state, &output);
+        state.dirty.set(true);
+        unsafe { SendMessageW(editor, EM_SETMODIFY, 1, 0) };
         state.set_title();
     }
     let message = dialogs::to_wide(&format!("Replaced {count} occurrence(s)."));
     let title = dialogs::to_wide(APP_NAME);
     unsafe {
         MessageBoxW(
-            state.hwnd,
+            state.hwnd.get(),
             message.as_ptr(),
             title.as_ptr(),
             MB_OK | MB_ICONINFORMATION,
@@ -1258,16 +1414,52 @@ fn slices_equal(left: &[u16], right: &[u16], flags: u32) -> bool {
 }
 
 fn whole_word_at(text: &[u16], start: usize, length: usize) -> bool {
-    let before = start
-        .checked_sub(1)
-        .and_then(|index| text.get(index))
-        .copied();
-    let after = text.get(start + length).copied();
-    !before.is_some_and(is_word_unit) && !after.is_some_and(is_word_unit)
+    !scalar_before(text, start).is_some_and(is_word_scalar)
+        && !scalar_after(text, start + length).is_some_and(is_word_scalar)
 }
 
-fn is_word_unit(unit: u16) -> bool {
-    char::from_u32(unit as u32).is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+fn scalar_before(text: &[u16], boundary: usize) -> Option<char> {
+    let last = *text.get(boundary.checked_sub(1)?)?;
+    if is_low_surrogate(last) {
+        let high = *text.get(boundary.checked_sub(2)?)?;
+        decode_surrogate_pair(high, last)
+    } else if is_high_surrogate(last) {
+        None
+    } else {
+        char::from_u32(last as u32)
+    }
+}
+
+fn scalar_after(text: &[u16], boundary: usize) -> Option<char> {
+    let first = *text.get(boundary)?;
+    if is_high_surrogate(first) {
+        let low = *text.get(boundary + 1)?;
+        decode_surrogate_pair(first, low)
+    } else if is_low_surrogate(first) {
+        None
+    } else {
+        char::from_u32(first as u32)
+    }
+}
+
+const fn is_high_surrogate(unit: u16) -> bool {
+    unit >= 0xD800 && unit <= 0xDBFF
+}
+
+const fn is_low_surrogate(unit: u16) -> bool {
+    unit >= 0xDC00 && unit <= 0xDFFF
+}
+
+fn decode_surrogate_pair(high: u16, low: u16) -> Option<char> {
+    if !is_high_surrogate(high) || !is_low_surrogate(low) {
+        return None;
+    }
+    let scalar = 0x1_0000 + (((high as u32 - 0xD800) << 10) | (low as u32 - 0xDC00));
+    char::from_u32(scalar)
+}
+
+fn is_word_scalar(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
 }
 
 fn nul_terminated_slice(buffer: &[u16]) -> &[u16] {
@@ -1385,5 +1577,33 @@ mod tests {
             "x var_name var2 (x) x-name"
         );
         assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn whole_word_boundaries_decode_supplementary_alphanumeric_scalars() {
+        let before: Vec<u16> = "𐐀cat".encode_utf16().collect();
+        let after: Vec<u16> = "cat𐐀".encode_utf16().collect();
+        let separated: Vec<u16> = "𐐀 cat".encode_utf16().collect();
+
+        assert!(!whole_word_at(&before, 2, 3));
+        assert!(!whole_word_at(&after, 0, 3));
+        assert!(whole_word_at(&separated, 3, 3));
+
+        let needle: Vec<u16> = "cat".encode_utf16().collect();
+        assert_eq!(
+            find_utf16(&separated, &needle, 0, true, FR_DOWN | FR_WHOLEWORD,),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn isolated_surrogates_are_non_word_boundaries() {
+        let before = [0xD800, b'c' as u16, b'a' as u16, b't' as u16];
+        let after = [b'c' as u16, b'a' as u16, b't' as u16, 0xDC00];
+
+        assert!(whole_word_at(&before, 1, 3));
+        assert!(whole_word_at(&after, 0, 3));
+        assert_eq!(scalar_before(&before, 1), None);
+        assert_eq!(scalar_after(&after, 3), None);
     }
 }

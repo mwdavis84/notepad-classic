@@ -61,16 +61,14 @@ fn decode_with_legacy(
         )
     } else if bytes.starts_with(&[0xFF, 0xFE]) {
         let body = &bytes[2..];
-        if !body.len().is_multiple_of(2) {
+        if body.len() % 2 != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "UTF-16 LE file has an incomplete code unit",
             ));
         }
         let units: Vec<u16> = body
-            .as_chunks::<2>()
-            .0
-            .iter()
+            .chunks_exact(2)
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .collect();
         (
