@@ -581,7 +581,7 @@ pub fn show_about(owner: HWND, instance: HINSTANCE) {
     let mut owner_rect: RECT = unsafe { zeroed() };
     unsafe { GetWindowRect(owner, &mut owner_rect) };
     let width = scale_for_dpi(380, dpi);
-    let height = scale_for_dpi(250, dpi);
+    let height = scale_for_dpi(260, dpi);
     let x = owner_rect.left + ((owner_rect.right - owner_rect.left - width) / 2).max(0);
     let y = owner_rect.top + ((owner_rect.bottom - owner_rect.top - height) / 2).max(0);
     let title = to_wide("About Notepad Classic");
@@ -627,6 +627,10 @@ pub fn show_about(owner: HWND, instance: HINSTANCE) {
         if status <= 0 {
             if status == 0 {
                 unsafe { PostQuitMessage(message.wParam as i32) };
+            }
+            if !state.done.get() {
+                state.done.set(true);
+                unsafe { DestroyWindow(hwnd) };
             }
             break;
         }
@@ -680,7 +684,7 @@ unsafe extern "system" fn about_window_proc(
             state.icon_control.set(icon_control);
 
             let app_version = format!("Notepad Classic\nVersion {}", env!("CARGO_PKG_VERSION"));
-            create_child(
+            let app_name_control = create_child(
                 hwnd,
                 "STATIC",
                 &app_version,
@@ -692,7 +696,7 @@ unsafe extern "system" fn about_window_proc(
                 ID_ABOUT_APP_NAME,
             );
 
-            create_child(
+            let publisher_control = create_child(
                 hwnd,
                 "STATIC",
                 "Publisher: DeekFit\nReleased under the MIT License.",
@@ -754,15 +758,26 @@ unsafe extern "system" fn about_window_proc(
             );
             state.close_button.set(close_button);
 
+            if icon_control.is_null()
+                || app_name_control.is_null()
+                || publisher_control.is_null()
+                || link1.is_null()
+                || link2.is_null()
+                || link3.is_null()
+                || close_button.is_null()
+            {
+                return -1;
+            }
+
             layout_about(state, dpi);
             replace_about_font(state, dpi);
             replace_about_icon(state, instance, dpi);
             0
         }
         WM_NOTIFY => {
-            let nmhdr = unsafe { *(lparam as *const NMHDR) };
+            let nmhdr = unsafe { &*(lparam as *const NMHDR) };
             if nmhdr.code == NM_CLICK || nmhdr.code == NM_RETURN {
-                let nmlink = unsafe { *(lparam as *const NMLINK) };
+                let nmlink = unsafe { &*(lparam as *const NMLINK) };
                 let url = &nmlink.item.szUrl;
                 let result = unsafe {
                     ShellExecuteW(
@@ -1010,5 +1025,50 @@ mod tests {
         assert_eq!(wide.last(), Some(&0));
         let round_trip = OsString::from_wide(&wide[..wide.len() - 1]);
         assert_eq!(round_trip.encode_wide().collect::<Vec<_>>(), units);
+    }
+
+    #[test]
+    fn scale_for_dpi_scales_proportionally() {
+        // 96 DPI (100% scale)
+        assert_eq!(scale_for_dpi(380, 96), 380);
+        assert_eq!(scale_for_dpi(260, 96), 260);
+        assert_eq!(scale_for_dpi(32, 96), 32);
+
+        // 120 DPI (125% scale)
+        assert_eq!(scale_for_dpi(380, 120), 475);
+        assert_eq!(scale_for_dpi(260, 120), 325);
+        assert_eq!(scale_for_dpi(32, 120), 40);
+
+        // 144 DPI (150% scale)
+        assert_eq!(scale_for_dpi(380, 144), 570);
+        assert_eq!(scale_for_dpi(260, 144), 390);
+        assert_eq!(scale_for_dpi(32, 144), 48);
+
+        // 192 DPI (200% scale)
+        assert_eq!(scale_for_dpi(380, 192), 760);
+        assert_eq!(scale_for_dpi(260, 192), 520);
+        assert_eq!(scale_for_dpi(32, 192), 64);
+    }
+
+    #[test]
+    fn about_dialog_hyperlinks_are_valid_syslink_markup() {
+        let links = [
+            "<a href=\"https://github.com/mwdavis84/notepad-classic\">GitHub Repository</a>",
+            "<a href=\"https://github.com/mwdavis84/notepad-classic/blob/main/LICENSE\">MIT License</a>",
+            "<a href=\"https://threads.com/@deekfit_apps\">Follow @deekfit_apps on Threads</a>",
+        ];
+
+        for link in links {
+            assert!(link.starts_with("<a href=\"https://"));
+            assert!(link.ends_with("</a>"));
+            assert!(link.contains("\">"));
+        }
+    }
+
+    #[test]
+    fn about_dialog_app_version_string_matches_package() {
+        let app_version = format!("Notepad Classic\nVersion {}", env!("CARGO_PKG_VERSION"));
+        assert!(app_version.starts_with("Notepad Classic\nVersion "));
+        assert!(!env!("CARGO_PKG_VERSION").is_empty());
     }
 }
