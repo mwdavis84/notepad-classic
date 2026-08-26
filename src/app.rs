@@ -35,6 +35,7 @@ use crate::dialogs::{self, SaveDecision};
 use crate::file::{self, TextFormat};
 
 const APP_NAME: &str = "Notepad Classic";
+const APP_ICON_RESOURCE_ID: usize = 1;
 const CLASS_NAME: &[u16] = &[
     b'N' as u16,
     b'o' as u16,
@@ -162,7 +163,10 @@ pub fn run() -> Result<(), String> {
         return Err(dialogs::os_error("Unable to register the Find message"));
     }
 
-    let icon = unsafe { LoadIconW(null_mut(), IDI_APPLICATION) };
+    let icon = unsafe { LoadIconW(instance, APP_ICON_RESOURCE_ID as *const u16) };
+    if icon.is_null() {
+        return Err(dialogs::os_error("Unable to load the application icon"));
+    }
     let cursor = unsafe { LoadCursorW(null_mut(), IDC_IBEAM) };
     let class = WNDCLASSEXW {
         cbSize: size_of::<WNDCLASSEXW>() as u32,

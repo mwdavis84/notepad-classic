@@ -17,6 +17,10 @@ cargo build --release
 The standalone executable is written to
 `target\release\notepad-classic.exe`.
 
+The executable includes a native Windows icon resource with 16, 20, 24, 32,
+40, 48, 64, 128, and 256 pixel variants, so the app icon is used in Explorer,
+the taskbar, Alt+Tab, and the window caption without needing a sidecar file.
+
 The release profile uses size optimization, whole-program LTO, one codegen unit,
 symbol stripping, and aborting panics. These settings trade a slower build for a
 smaller executable and avoid unwinding machinery without adding runtime work.
