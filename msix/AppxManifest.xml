@@ -11,7 +11,7 @@
   <Identity
     Name="43357DeekFit.Notepad-Classic"
     Publisher="CN=7AD5BA06-4A9B-4992-8CB4-C9DB75B358B0"
-    Version="0.1.0.0"
+    Version="1.0.0.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
@@ -52,7 +52,10 @@
             </uap:SupportedFileTypes>
           </uap:FileTypeAssociation>
         </uap:Extension>
-        <uap3:Extension Category="windows.appExecutionAlias">
+        <uap3:Extension
+          Category="windows.appExecutionAlias"
+          Executable="notepad-classic.exe"
+          EntryPoint="Windows.FullTrustApplication">
           <uap3:AppExecutionAlias>
             <desktop:ExecutionAlias Alias="notepad-classic.exe" />
           </uap3:AppExecutionAlias>

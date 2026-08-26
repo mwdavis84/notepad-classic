@@ -41,3 +41,7 @@ jobs:
 
       - name: Release build
         run: cargo build --release --locked
+
+      - name: Package MSIX
+        run: powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -SkipBuild
+

@@ -4,14 +4,16 @@
 
 .DESCRIPTION
     Compiles the release binary, creates the MSIX staging layout, validates and updates
-    the package version from Cargo.toml, and runs makeappx.exe.
+    the package version and target architecture from Cargo.toml and parameters, and runs makeappx.exe
+    with full semantic validation enabled.
     Optionally signs the package with a local self-signed certificate for local testing.
 
 .PARAMETER Configuration
     Build configuration (default: 'release').
 
 .PARAMETER Target
-    Rust target triple (default: 'x86_64-pc-windows-msvc').
+    Rust target triple (default: 'x86_64-pc-windows-msvc'). Supported: 'x86_64-pc-windows-msvc' (x64),
+    'aarch64-pc-windows-msvc' (arm64), 'i686-pc-windows-msvc' (x86).
 
 .PARAMETER MakeAppxPath
     Explicit path to makeappx.exe if not in PATH or standard Windows SDK directories.
@@ -46,6 +48,18 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
+
+# 1. Map target architecture
+$targetToArch = @{
+    "x86_64-pc-windows-msvc"  = "x64"
+    "aarch64-pc-windows-msvc" = "arm64"
+    "i686-pc-windows-msvc"    = "x86"
+}
+
+if (-not $targetToArch.ContainsKey($Target)) {
+    Write-Error "Unsupported target '$Target'. Supported targets are: $($targetToArch.Keys -join ', ')."
+}
+$msixArch = $targetToArch[$Target]
 
 function Find-SdkTool {
     param (
@@ -93,14 +107,14 @@ function Find-SdkTool {
     return $null
 }
 
-# 1. Locate makeappx.exe
+# 2. Locate makeappx.exe
 $makeappx = Find-SdkTool -ToolName "makeappx.exe" -ExplicitPath $MakeAppxPath
 if (-not $makeappx) {
     Write-Error "Could not find 'makeappx.exe'. Please install the Windows 10/11 SDK or specify -MakeAppxPath."
 }
 Write-Host "Found makeappx: $makeappx" -ForegroundColor Cyan
 
-# 2. Extract and validate version from Cargo.toml
+# 3. Extract and validate version from Cargo.toml
 $cargoTomlPath = Join-Path $PSScriptRoot "Cargo.toml"
 if (-not (Test-Path $cargoTomlPath)) {
     Write-Error "Cargo.toml not found at $cargoTomlPath"
@@ -122,17 +136,20 @@ if ($parts.Count -eq 3) {
     Write-Error "Version '$rawVersion' cannot be mapped to a 4-part MSIX version (Major.Minor.Build.Revision)."
 }
 
-# Validate each numeric component is 0..65535
+# Validate each numeric component is 0..65535, with Major >= 1 for Microsoft Store compliance
 $versionSegments = $msixVersion -split '\.'
-foreach ($seg in $versionSegments) {
+for ($i = 0; $i -lt $versionSegments.Count; $i++) {
     [int]$num = 0
-    if (-not [int]::TryParse($seg, [ref]$num) -or $num -lt 0 -or $num -gt 65535) {
-        Write-Error "MSIX version segment '$seg' in '$msixVersion' must be an integer between 0 and 65535."
+    if (-not [int]::TryParse($versionSegments[$i], [ref]$num) -or $num -lt 0 -or $num -gt 65535) {
+        Write-Error "MSIX version segment '$($versionSegments[$i])' in '$msixVersion' must be an integer between 0 and 65535."
+    }
+    if ($i -eq 0 -and $num -lt 1) {
+        Write-Error "Microsoft Store MSIX packages require the major version component to be >= 1 (e.g. 1.0.0.0). Found major version: $num."
     }
 }
-Write-Host "App version: $rawVersion -> MSIX version: $msixVersion" -ForegroundColor Cyan
+Write-Host "App version: $rawVersion -> MSIX version: $msixVersion (Arch: $msixArch)" -ForegroundColor Cyan
 
-# 3. Build executable
+# 4. Build executable
 $binaryDir = Join-Path $PSScriptRoot "target\$Target\$Configuration"
 $binaryPath = Join-Path $binaryDir "notepad-classic.exe"
 if (-not (Test-Path $binaryPath)) {
@@ -161,7 +178,7 @@ if (-not (Test-Path $binaryPath)) {
 }
 Write-Host "Using binary: $binaryPath" -ForegroundColor Cyan
 
-# 4. Prepare MSIX staging directory
+# 5. Prepare MSIX staging directory
 $layoutDir = Join-Path $PSScriptRoot "target\msix-layout"
 if (Test-Path $layoutDir) {
     Remove-Item -Path $layoutDir -Recurse -Force
@@ -186,25 +203,26 @@ if (-not (Test-Path $manifestSource)) {
     Write-Error "AppxManifest.xml not found at $manifestSource"
 }
 $manifestContent = Get-Content $manifestSource -Raw
-# Replace version in manifest
+# Replace version and architecture in manifest
 $manifestContent = [regex]::Replace($manifestContent, 'Version="[^"]+"', "Version=`"$msixVersion`"")
+$manifestContent = [regex]::Replace($manifestContent, 'ProcessorArchitecture="[^"]+"', "ProcessorArchitecture=`"$msixArch`"")
 $manifestDest = Join-Path $layoutDir "AppxManifest.xml"
 Set-Content -Path $manifestDest -Value $manifestContent -Encoding Utf8
 
-# 5. Pack with makeappx.exe
+# 6. Pack with makeappx.exe (Full semantic validation enabled, /nv omitted)
 $packageOutputDir = Join-Path $PSScriptRoot "target"
-$packageName = "notepad-classic_${msixVersion}_x64.msix"
+$packageName = "notepad-classic_${msixVersion}_${msixArch}.msix"
 $packagePath = Join-Path $packageOutputDir $packageName
 
-Write-Host "Packing MSIX package..." -ForegroundColor Cyan
-& $makeappx pack /d "$layoutDir" /p "$packagePath" /o /nv
+Write-Host "Packing MSIX package with semantic validation..." -ForegroundColor Cyan
+& $makeappx pack /d "$layoutDir" /p "$packagePath" /o
 if ($LASTEXITCODE -ne 0) {
     Write-Error "makeappx pack failed with exit code $LASTEXITCODE"
 }
 
 Write-Host "`nPackage created successfully: $packagePath" -ForegroundColor Green
 
-# 6. Local Testing Signing (Optional)
+# 7. Local Testing Signing (Optional)
 if ($SignForLocalTesting) {
     $signtool = Find-SdkTool -ToolName "signtool.exe" -ExplicitPath $SignToolPath
     if (-not $signtool) {
@@ -233,11 +251,11 @@ if ($SignForLocalTesting) {
         Write-Error "signtool sign failed with exit code $LASTEXITCODE"
     }
 
-    Write-Host "`n[SUCCESS] Package signed for local testing!" -ForegroundColor Green
-    Write-Host "To install on this machine:" -ForegroundColor Yellow
-    Write-Host "  1. Ensure the certificate is in 'Trusted People':"
+    Write-Host "`n[SUCCESS] Package signed with local test certificate!" -ForegroundColor Green
+    Write-Host "Before installing, ensure the test certificate is trusted in 'Trusted People' on this machine:" -ForegroundColor Yellow
+    Write-Host "  1. Export and trust the certificate (run as Administrator if using LocalMachine):"
     Write-Host "     Export-Certificate -Cert (Get-Item Cert:\CurrentUser\My\$($cert.Thumbprint)) -FilePath target\dev-test.cer"
-    Write-Host "     Import-Certificate -FilePath target\dev-test.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople"
+    Write-Host "     Import-Certificate -FilePath target\dev-test.cer -CertStoreLocation Cert:\CurrentUser\TrustedPeople"
     Write-Host "  2. Install the package:"
     Write-Host "     Add-AppxPackage -Path `"$packagePath`""
 } else {
