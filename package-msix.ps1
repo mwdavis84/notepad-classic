@@ -203,9 +203,9 @@ if (-not (Test-Path $manifestSource)) {
     Write-Error "AppxManifest.xml not found at $manifestSource"
 }
 $manifestContent = Get-Content $manifestSource -Raw
-# Replace version and architecture in manifest
-$manifestContent = [regex]::Replace($manifestContent, 'Version="[^"]+"', "Version=`"$msixVersion`"")
-$manifestContent = [regex]::Replace($manifestContent, 'ProcessorArchitecture="[^"]+"', "ProcessorArchitecture=`"$msixArch`"")
+# Replace version and architecture in manifest Identity element only
+$manifestContent = [regex]::Replace($manifestContent, '(<Identity[\s\S]*?\bVersion=")[^"]+', '${1}' + $msixVersion)
+$manifestContent = [regex]::Replace($manifestContent, '(<Identity[\s\S]*?\bProcessorArchitecture=")[^"]+', '${1}' + $msixArch)
 $manifestDest = Join-Path $layoutDir "AppxManifest.xml"
 Set-Content -Path $manifestDest -Value $manifestContent -Encoding Utf8
 
