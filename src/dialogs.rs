@@ -16,22 +16,21 @@ use windows_sys::Win32::UI::Controls::Dialogs::{
     CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST,
     OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
-use windows_sys::Win32::UI::Controls::{NMHDR, NMLINK, NM_CLICK, NM_RETURN};
+use windows_sys::Win32::UI::Controls::{NM_CLICK, NM_RETURN, NMHDR, NMLINK};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, SystemParametersInfoForDpi};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, SetFocus};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BS_DEFPUSHBUTTON, CREATESTRUCTW, CS_DBLCLKS, CreateWindowExW, DefWindowProcW, DestroyIcon,
     DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, ES_NUMBER, EnumChildWindows, GWLP_HINSTANCE,
-    GWLP_USERDATA, GetDlgItem, GetMessageW, GetWindowLongPtrW, GetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, HICON, IDC_ARROW, IDCANCEL, IDNO, IDOK, IDYES,
-    IMAGE_ICON, IsDialogMessageW, LR_DEFAULTCOLOR, LoadCursorW, LoadImageW, MB_ICONERROR,
-    MB_ICONQUESTION, MB_ICONWARNING, MB_OK, MB_YESNO, MB_YESNOCANCEL, MSG, MessageBoxW,
-    MoveWindow, NONCLIENTMETRICSW, PostQuitMessage, RegisterClassW, SPI_GETNONCLIENTMETRICS,
-    STM_SETICON, SW_SHOW, SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageW,
-    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
-    WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DPICHANGED, WM_NCCREATE,
-    WM_NCDESTROY, WM_NOTIFY, WM_SETFONT, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
+    GWLP_USERDATA, GetDlgItem, GetMessageW, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, HICON, IDC_ARROW, IDCANCEL, IDNO, IDOK, IDYES, IMAGE_ICON, IsDialogMessageW,
+    LR_DEFAULTCOLOR, LoadCursorW, LoadImageW, MB_ICONERROR, MB_ICONQUESTION, MB_ICONWARNING, MB_OK,
+    MB_YESNO, MB_YESNOCANCEL, MSG, MessageBoxW, MoveWindow, NONCLIENTMETRICSW, PostQuitMessage,
+    RegisterClassW, SPI_GETNONCLIENTMETRICS, STM_SETICON, SW_SHOW, SW_SHOWNORMAL, SWP_NOACTIVATE,
+    SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    TranslateMessage, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DPICHANGED,
+    WM_NCCREATE, WM_NCDESTROY, WM_NOTIFY, WM_SETFONT, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
     WS_EX_CONTROLPARENT, WS_EX_DLGMODALFRAME, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
@@ -670,17 +669,8 @@ unsafe extern "system" fn about_window_proc(
             let instance = unsafe { (*(lparam as *const CREATESTRUCTW)).hInstance };
             let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
 
-            let icon_control = create_child(
-                hwnd,
-                "STATIC",
-                "",
-                WS_VISIBLE | SS_ICON as u32,
-                0,
-                0,
-                0,
-                0,
-                0,
-            );
+            let icon_control =
+                create_child(hwnd, "STATIC", "", WS_VISIBLE | SS_ICON, 0, 0, 0, 0, 0);
             state.icon_control.set(icon_control);
 
             let app_version = format!("Notepad Classic\nVersion {}", env!("CARGO_PKG_VERSION"));
