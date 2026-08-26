@@ -15,7 +15,7 @@
     ProcessorArchitecture="x64" />
 
   <Properties>
-    <DisplayName>Notepad Classic</DisplayName>
+    <DisplayName>Notepad-Classic</DisplayName>
     <PublisherDisplayName>DeekFit</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -36,7 +36,7 @@
       uap10:RuntimeBehavior="packagedClassicApp"
       uap10:TrustLevel="mediumIL">
       <uap:VisualElements
-        DisplayName="Notepad Classic"
+        DisplayName="Notepad-Classic"
         Description="A deliberately small, fast Windows text editor"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
