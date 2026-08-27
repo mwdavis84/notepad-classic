@@ -36,6 +36,12 @@ BEGIN
     END
     POPUP "表示(&V)"
     BEGIN
+        POPUP "ズーム(&Z)"
+        BEGIN
+            MENUITEM "拡大(&I)\tCtrl++", ID_VIEW_ZOOM_IN
+            MENUITEM "縮小(&O)\tCtrl+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "既定のズームに戻す(&R)\tCtrl+0", ID_VIEW_ZOOM_DEFAULT
+        END
         MENUITEM "ステータス バー(&S)", ID_VIEW_STATUS
     END
     POPUP "ヘルプ(&H)"
@@ -55,6 +61,7 @@ BEGIN
     IDS_OPEN_FILE_FAILED "ファイルを開けませんでした:\n\n%1"
     IDS_SAVE_FILE_FAILED "ファイルを保存できませんでした:\n\n%1"
     IDS_STATUS_POSITION "%1 行、%2 列"
+    IDS_STATUS_ZOOM "%1%%"
     IDS_GOTO_TITLE "行へ移動"
     IDS_GOTO_LABEL "行番号(&L):"
     IDS_GOTO_RANGE "行番号は 1 から %1 までの間である必要があります。"

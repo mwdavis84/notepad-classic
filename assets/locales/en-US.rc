@@ -36,6 +36,12 @@ BEGIN
     END
     POPUP "&View"
     BEGIN
+        POPUP "&Zoom"
+        BEGIN
+            MENUITEM "Zoom &In\tCtrl++", ID_VIEW_ZOOM_IN
+            MENUITEM "Zoom &Out\tCtrl+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "&Restore Default Zoom\tCtrl+0", ID_VIEW_ZOOM_DEFAULT
+        END
         MENUITEM "&Status Bar", ID_VIEW_STATUS
     END
     POPUP "&Help"
@@ -55,6 +61,7 @@ BEGIN
     IDS_OPEN_FILE_FAILED "Could not open the file:\n\n%1"
     IDS_SAVE_FILE_FAILED "Could not save the file:\n\n%1"
     IDS_STATUS_POSITION "Ln %1, Col %2"
+    IDS_STATUS_ZOOM "%1%%"
     IDS_GOTO_TITLE "Go To Line"
     IDS_GOTO_LABEL "&Line number:"
     IDS_GOTO_RANGE "The line number must be between 1 and %1."

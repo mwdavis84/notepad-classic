@@ -36,6 +36,12 @@ BEGIN
     END
     POPUP "&Affichage"
     BEGIN
+        POPUP "&Zoom"
+        BEGIN
+            MENUITEM "Zoom a&vant\tCtrl++", ID_VIEW_ZOOM_IN
+            MENUITEM "Zoom a&rrière\tCtrl+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "Rétablir le zoom par dé&faut\tCtrl+0", ID_VIEW_ZOOM_DEFAULT
+        END
         MENUITEM "&Barre d'état", ID_VIEW_STATUS
     END
     POPUP "A&ide"
@@ -55,6 +61,7 @@ BEGIN
     IDS_OPEN_FILE_FAILED "Impossible d'ouvrir le fichier :\n\n%1"
     IDS_SAVE_FILE_FAILED "Impossible d'enregistrer le fichier :\n\n%1"
     IDS_STATUS_POSITION "Ln %1, Col %2"
+    IDS_STATUS_ZOOM "%1%%"
     IDS_GOTO_TITLE "Atteindre la ligne"
     IDS_GOTO_LABEL "&Numéro de ligne :"
     IDS_GOTO_RANGE "Le numéro de ligne doit être compris entre 1 et %1."

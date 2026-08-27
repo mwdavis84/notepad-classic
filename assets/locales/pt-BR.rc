@@ -36,6 +36,12 @@ BEGIN
     END
     POPUP "E&xibir"
     BEGIN
+        POPUP "&Zoom"
+        BEGIN
+            MENUITEM "&Ampliar\tCtrl++", ID_VIEW_ZOOM_IN
+            MENUITEM "&Reduzir\tCtrl+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "Restaurar zoom &padrão\tCtrl+0", ID_VIEW_ZOOM_DEFAULT
+        END
         MENUITEM "&Barra de status", ID_VIEW_STATUS
     END
     POPUP "Aj&uda"
@@ -55,6 +61,7 @@ BEGIN
     IDS_OPEN_FILE_FAILED "Não foi possível abrir o arquivo:\n\n%1"
     IDS_SAVE_FILE_FAILED "Não foi possível salvar o arquivo:\n\n%1"
     IDS_STATUS_POSITION "Lin %1, Col %2"
+    IDS_STATUS_ZOOM "%1%%"
     IDS_GOTO_TITLE "Ir para a linha"
     IDS_GOTO_LABEL "&Número da linha:"
     IDS_GOTO_RANGE "O número da linha deve estar entre 1 e %1."

@@ -36,6 +36,12 @@ BEGIN
     END
     POPUP "보기(&V)"
     BEGIN
+        POPUP "확대/축소(&Z)"
+        BEGIN
+            MENUITEM "확대(&I)\tCtrl++", ID_VIEW_ZOOM_IN
+            MENUITEM "축소(&O)\tCtrl+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "기본 확대/축소 복원(&R)\tCtrl+0", ID_VIEW_ZOOM_DEFAULT
+        END
         MENUITEM "상태 표시줄(&S)", ID_VIEW_STATUS
     END
     POPUP "도움말(&H)"
@@ -55,6 +61,7 @@ BEGIN
     IDS_OPEN_FILE_FAILED "파일을 열 수 없습니다:\n\n%1"
     IDS_SAVE_FILE_FAILED "파일을 저장할 수 없습니다:\n\n%1"
     IDS_STATUS_POSITION "%1행, %2열"
+    IDS_STATUS_ZOOM "%1%%"
     IDS_GOTO_TITLE "줄 이동"
     IDS_GOTO_LABEL "줄 번호(&L):"
     IDS_GOTO_RANGE "줄 번호는 1에서 %1 사이여야 합니다."
