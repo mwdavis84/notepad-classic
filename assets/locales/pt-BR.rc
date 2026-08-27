@@ -15,9 +15,9 @@ BEGIN
     BEGIN
         MENUITEM "&Desfazer\tCtrl+Z", ID_EDIT_UNDO
         MENUITEM SEPARATOR
-        MENUITEM "Recor&tar\tCtrl+X", ID_EDIT_CUT
+        MENUITEM "&Recortar\tCtrl+X", ID_EDIT_CUT
         MENUITEM "&Copiar\tCtrl+C", ID_EDIT_COPY
-        MENUITEM "Co&lar\tCtrl+V", ID_EDIT_PASTE
+        MENUITEM "C&olar\tCtrl+V", ID_EDIT_PASTE
         MENUITEM "Excl&uir\tDel", ID_EDIT_DELETE
         MENUITEM SEPARATOR
         MENUITEM "&Localizar...\tCtrl+F", ID_EDIT_FIND
@@ -26,7 +26,7 @@ BEGIN
         MENUITEM "&Substituir...\tCtrl+H", ID_EDIT_REPLACE
         MENUITEM "&Ir para...\tCtrl+G", ID_EDIT_GOTO
         MENUITEM SEPARATOR
-        MENUITEM "Sele&cionar tudo\tCtrl+A", ID_EDIT_SELECT_ALL
+        MENUITEM "Selecionar &tudo\tCtrl+A", ID_EDIT_SELECT_ALL
         MENUITEM "&Hora/data\tF5", ID_EDIT_TIME_DATE
     END
     POPUP "F&ormatar"
