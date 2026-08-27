@@ -37,6 +37,12 @@ The initial editor font is Lucida Console Regular 10 point, matching the classic
 Windows Notepad default. It can be changed for the current run with
 **Format > Font**; version 1 deliberately remembers no settings between runs.
 
+## Localization
+
+The executable embeds its small Win32 menu and string catalog. See
+[LOCALIZATION.md](LOCALIZATION.md) for the localization design and instructions
+for adding a locale.
+
 ## Text formats
 
 New documents are saved as UTF-8 without a BOM. Existing UTF-8, UTF-8 BOM, and

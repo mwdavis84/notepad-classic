@@ -1,1 +1,6 @@
-1 ICON "notepad-classic.ico"
+#pragma code_page(65001)
+
+#include "resource.h"
+
+IDI_APP_ICON ICON "notepad-classic.ico"
+#include "locales/en-US.rc"

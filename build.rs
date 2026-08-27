@@ -1,16 +1,72 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[path = "src/resource_catalog.rs"]
+mod resource_catalog;
+
 fn main() {
+    let assets = PathBuf::from("assets");
+    let header = assets.join("resource.h");
+    let locales = assets.join("locales");
+    println!("cargo:rerun-if-changed=assets/notepad-classic.ico");
+    println!("cargo:rerun-if-changed=assets/notepad-classic.rc");
+    println!("cargo:rerun-if-changed={}", header.display());
+    println!("cargo:rerun-if-changed={}", locales.display());
+    let defines = resource_catalog::parse_header(
+        &fs::read_to_string(&header)
+            .unwrap_or_else(|error| panic!("unable to read {}: {error}", header.display())),
+    )
+    .unwrap_or_else(|error| panic!("invalid {}: {error}", header.display()));
+    let known_strings = defines
+        .iter()
+        .filter(|define| define.name.starts_with("IDS_"))
+        .map(|define| define.name.clone())
+        .collect::<BTreeSet<_>>();
+    let english_path = locales.join("en-US.rc");
+    let english_source = fs::read_to_string(&english_path)
+        .unwrap_or_else(|error| panic!("unable to read {}: {error}", english_path.display()));
+    println!("cargo:rerun-if-changed={}", english_path.display());
+    let english = resource_catalog::validate_locale(&english_source, &known_strings, None)
+        .unwrap_or_else(|error| panic!("invalid English catalog: {error}"));
+    let mut catalog_languages = vec![(english_path.display().to_string(), english.language())];
+    let locale_entries = fs::read_dir(&locales)
+        .unwrap_or_else(|error| panic!("unable to read {}: {error}", locales.display()));
+    for entry in locale_entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("rc"))
+        {
+            println!("cargo:rerun-if-changed={}", path.display());
+            if path != english_path {
+                let source = fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("unable to read {}: {error}", path.display()));
+                let locale =
+                    resource_catalog::validate_locale(&source, &known_strings, Some(&english))
+                        .unwrap_or_else(|error| {
+                            panic!("invalid locale {}: {error}", path.display())
+                        });
+                catalog_languages.push((path.display().to_string(), locale.language()));
+            }
+        }
+    }
+    resource_catalog::validate_unique_languages(
+        catalog_languages
+            .iter()
+            .map(|(path, language)| (path.as_str(), *language)),
+    )
+    .unwrap_or_else(|error| panic!("invalid locale languages: {error}"));
+    let generated = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo did not set OUT_DIR"))
+        .join("resource_ids.rs");
+    fs::write(&generated, resource_catalog::generate_rust(&defines))
+        .unwrap_or_else(|error| panic!("unable to write {}: {error}", generated.display()));
+
     if env::var("CARGO_CFG_WINDOWS").is_err() {
         return;
     }
-
-    let assets = PathBuf::from("assets");
-    println!("cargo:rerun-if-changed=assets/notepad-classic.ico");
-    println!("cargo:rerun-if-changed=assets/notepad-classic.rc");
     for variable in [
         "RC",
         "PATH",
@@ -28,7 +84,7 @@ fn main() {
     let compiler = find_resource_compiler().unwrap_or_else(|message| panic!("{message}"));
     let status = Command::new(&compiler)
         .current_dir(&assets)
-        .args(["/nologo", "/fo"])
+        .args(["/nologo", "/c", "65001", "/fo"])
         .arg(&output)
         .arg("notepad-classic.rc")
         .status()

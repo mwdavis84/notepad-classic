@@ -1,7 +1,8 @@
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::ffi::{OsStr, OsString, c_void};
+use std::io;
 use std::mem::{size_of, zeroed};
-use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::windows::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::rc::Rc;
@@ -36,9 +37,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::dialogs::{self, SaveDecision};
 use crate::file::{self, TextFormat};
+use crate::localization::ids::*;
+use crate::localization::{self, FormatArg};
 
-const APP_NAME: &str = "Notepad Classic";
-const APP_ICON_RESOURCE_ID: usize = 1;
 const CLASS_NAME: &[u16] = &[
     b'N' as u16,
     b'o' as u16,
@@ -57,31 +58,23 @@ const CLASS_NAME: &[u16] = &[
     0,
 ];
 
-const ID_EDITOR: usize = 100;
-const ID_STATUS: usize = 101;
-const ID_FILE_NEW: usize = 1000;
-const ID_FILE_OPEN: usize = 1001;
-const ID_FILE_SAVE: usize = 1002;
-const ID_FILE_SAVE_AS: usize = 1003;
-const ID_FILE_EXIT: usize = 1004;
-const ID_EDIT_UNDO: usize = 1100;
-const ID_EDIT_CUT: usize = 1101;
-const ID_EDIT_COPY: usize = 1102;
-const ID_EDIT_PASTE: usize = 1103;
-const ID_EDIT_DELETE: usize = 1104;
-const ID_EDIT_FIND: usize = 1105;
-const ID_EDIT_FIND_NEXT: usize = 1106;
-const ID_EDIT_REPLACE: usize = 1107;
-const ID_EDIT_GOTO: usize = 1108;
-const ID_EDIT_SELECT_ALL: usize = 1109;
-const ID_EDIT_TIME_DATE: usize = 1110;
-const ID_EDIT_FIND_PREVIOUS: usize = 1111;
-const ID_FORMAT_WRAP: usize = 1200;
-const ID_FORMAT_FONT: usize = 1201;
-const ID_VIEW_STATUS: usize = 1300;
-const ID_HELP_ABOUT: usize = 1400;
 const WM_APP_UPDATE_STATUS: u32 = WM_APP + 1;
 const FIND_OPTION_FLAGS: u32 = FR_DOWN | FR_MATCHCASE | FR_WHOLEWORD;
+
+fn app_name() -> String {
+    localized_string(IDS_APP_NAME)
+}
+
+fn localized_string(id: usize) -> String {
+    let value = localization::text(id);
+    String::from_utf16_lossy(localization::without_trailing_nul(&value))
+}
+
+fn localized_error(id: usize, detail: impl std::fmt::Display) -> String {
+    let detail = detail.to_string().encode_utf16().collect::<Vec<_>>();
+    let text = localization::format(id, &[FormatArg::Wide(&detail)]);
+    String::from_utf16_lossy(localization::without_trailing_nul(&text))
+}
 
 #[derive(Clone, Copy)]
 struct FontChoice {
@@ -144,16 +137,20 @@ impl AppState {
             .as_deref()
             .and_then(Path::file_name)
             .map(OsStr::to_os_string)
-            .unwrap_or_else(|| OsString::from("Untitled"))
+            .unwrap_or_else(|| {
+                let text = localization::text(IDS_UNTITLED);
+                OsString::from_wide(localization::without_trailing_nul(&text))
+            })
     }
 
     fn set_title(&self) {
+        let display_name = self.display_name();
         let mut title = Vec::new();
         if self.dirty.get() {
             title.push(b'*' as u16);
         }
-        title.extend(self.display_name().encode_wide());
-        title.extend(" - Notepad Classic".encode_utf16());
+        let localized = localization::format(IDS_WINDOW_TITLE, &[FormatArg::Os(&display_name)]);
+        title.extend_from_slice(localization::without_trailing_nul(&localized));
         title.push(0);
         unsafe { SetWindowTextW(self.hwnd.get(), title.as_ptr()) };
     }
@@ -176,16 +173,30 @@ pub fn run() -> Result<(), String> {
 
     let instance = unsafe { GetModuleHandleW(null()) };
     if instance.is_null() {
-        return Err(dialogs::os_error("Unable to get the application module"));
+        // Capture immediately: localization and cleanup also call Win32 APIs and
+        // must never replace the error reported by the failed operation.
+        let error = io::Error::last_os_error();
+        return Err(dialogs::os_error(
+            &localized_string(IDS_GET_MODULE_FAILED),
+            &error,
+        ));
     }
     let find_message = unsafe { RegisterWindowMessageW(FINDMSGSTRINGW) };
     if find_message == 0 {
-        return Err(dialogs::os_error("Unable to register the Find message"));
+        let error = io::Error::last_os_error();
+        return Err(dialogs::os_error(
+            &localized_string(IDS_REGISTER_FIND_FAILED),
+            &error,
+        ));
     }
 
-    let icon = unsafe { LoadIconW(instance, APP_ICON_RESOURCE_ID as *const u16) };
+    let icon = unsafe { LoadIconW(instance, IDI_APP_ICON as *const u16) };
     if icon.is_null() {
-        return Err(dialogs::os_error("Unable to load the application icon"));
+        let error = io::Error::last_os_error();
+        return Err(dialogs::os_error(
+            &localized_string(IDS_LOAD_ICON_FAILED),
+            &error,
+        ));
     }
     let cursor = unsafe { LoadCursorW(null_mut(), IDC_IBEAM) };
     let class = WNDCLASSEXW {
@@ -203,12 +214,22 @@ pub fn run() -> Result<(), String> {
         hIconSm: icon,
     };
     if unsafe { RegisterClassExW(&class) } == 0 {
-        return Err(dialogs::os_error("Unable to register the window class"));
+        let error = io::Error::last_os_error();
+        return Err(dialogs::os_error(
+            &localized_string(IDS_REGISTER_CLASS_FAILED),
+            &error,
+        ));
     }
 
     let menu = create_menu()?;
     let state = Rc::new(AppState::new(instance, menu, find_message));
-    let title = dialogs::to_wide("Untitled - Notepad Classic");
+    let untitled = localization::text(IDS_UNTITLED);
+    let title = localization::format(
+        IDS_WINDOW_TITLE,
+        &[FormatArg::Wide(localization::without_trailing_nul(
+            &untitled,
+        ))],
+    );
     let hwnd = unsafe {
         CreateWindowExW(
             0,
@@ -226,7 +247,11 @@ pub fn run() -> Result<(), String> {
         )
     };
     if hwnd.is_null() {
-        return Err(dialogs::os_error("Unable to create the main window"));
+        let error = io::Error::last_os_error();
+        return Err(dialogs::os_error(
+            &localized_string(IDS_CREATE_WINDOW_FAILED),
+            &error,
+        ));
     }
 
     unsafe {
@@ -244,8 +269,12 @@ pub fn run() -> Result<(), String> {
     loop {
         let result = unsafe { GetMessageW(&mut message, null_mut(), 0, 0) };
         if result == -1 {
+            let error = io::Error::last_os_error();
             unsafe { DestroyAcceleratorTable(accelerator) };
-            return Err(dialogs::os_error("The message loop failed"));
+            return Err(dialogs::os_error(
+                &localized_string(IDS_MESSAGE_LOOP_FAILED),
+                &error,
+            ));
         }
         if result == 0 {
             break;
@@ -311,7 +340,7 @@ unsafe extern "system" fn window_proc(
                 0
             }
             Err(message) => {
-                dialogs::show_error(Some(hwnd), APP_NAME, &message);
+                dialogs::show_error(Some(hwnd), &app_name(), &message);
                 -1
             }
         },
@@ -330,7 +359,7 @@ unsafe extern "system" fn window_proc(
         WM_COMMAND => {
             let id = wparam & 0xFFFF;
             let notification = (wparam >> 16) & 0xFFFF;
-            if id == ID_EDITOR && notification == EN_CHANGE as usize {
+            if id == IDC_EDITOR && notification == EN_CHANGE as usize {
                 if !state.suppress_change.get() {
                     state.dirty.set(true);
                     state.set_title();
@@ -414,13 +443,17 @@ fn create_children(state: &AppState) -> Result<(), String> {
             0,
             0,
             state.hwnd.get(),
-            ID_STATUS as *mut c_void,
+            IDC_STATUS as *mut c_void,
             state.instance,
             null_mut(),
         )
     };
     if status.is_null() {
-        return Err(dialogs::os_error("Unable to create the status bar"));
+        let error = io::Error::last_os_error();
+        return Err(dialogs::os_error(
+            &localized_string(IDS_CREATE_STATUS_FAILED),
+            &error,
+        ));
     }
     state.status.set(status);
     unsafe {
@@ -468,13 +501,17 @@ fn create_editor(state: &AppState) -> Result<HWND, String> {
             0,
             0,
             state.hwnd.get(),
-            ID_EDITOR as *mut c_void,
+            IDC_EDITOR as *mut c_void,
             state.instance,
             null_mut(),
         )
     };
     if editor.is_null() {
-        Err(dialogs::os_error("Unable to create the editor"))
+        let error = io::Error::last_os_error();
+        Err(dialogs::os_error(
+            &localized_string(IDS_CREATE_EDITOR_FAILED),
+            &error,
+        ))
     } else {
         Ok(editor)
     }
@@ -565,68 +602,16 @@ fn layout_children(state: &AppState) {
 }
 
 fn create_menu() -> Result<HMENU, String> {
-    unsafe {
-        let bar = CreateMenu();
-        let file = CreatePopupMenu();
-        let edit = CreatePopupMenu();
-        let format = CreatePopupMenu();
-        let view = CreatePopupMenu();
-        let help = CreatePopupMenu();
-        if bar.is_null()
-            || file.is_null()
-            || edit.is_null()
-            || format.is_null()
-            || view.is_null()
-            || help.is_null()
-        {
-            return Err(dialogs::os_error("Unable to create the menu"));
+    match localization::menu(IDR_MAIN_MENU) {
+        Some(menu) => Ok(menu),
+        None => {
+            let error = io::Error::last_os_error();
+            Err(dialogs::os_error(
+                &localized_string(IDS_LOAD_MENU_FAILED),
+                &error,
+            ))
         }
-        append(file, ID_FILE_NEW, "&New\tCtrl+N");
-        append(file, ID_FILE_OPEN, "&Open...\tCtrl+O");
-        append(file, ID_FILE_SAVE, "&Save\tCtrl+S");
-        append(file, ID_FILE_SAVE_AS, "Save &As...\tCtrl+Shift+S");
-        AppendMenuW(file, MF_SEPARATOR, 0, null());
-        append(file, ID_FILE_EXIT, "E&xit");
-
-        append(edit, ID_EDIT_UNDO, "&Undo\tCtrl+Z");
-        AppendMenuW(edit, MF_SEPARATOR, 0, null());
-        append(edit, ID_EDIT_CUT, "Cu&t\tCtrl+X");
-        append(edit, ID_EDIT_COPY, "&Copy\tCtrl+C");
-        append(edit, ID_EDIT_PASTE, "&Paste\tCtrl+V");
-        append(edit, ID_EDIT_DELETE, "De&lete\tDel");
-        AppendMenuW(edit, MF_SEPARATOR, 0, null());
-        append(edit, ID_EDIT_FIND, "&Find...\tCtrl+F");
-        append(edit, ID_EDIT_FIND_NEXT, "Find &Next\tF3");
-        append(edit, ID_EDIT_FIND_PREVIOUS, "Find Pre&vious\tShift+F3");
-        append(edit, ID_EDIT_REPLACE, "&Replace...\tCtrl+H");
-        append(edit, ID_EDIT_GOTO, "&Go To...\tCtrl+G");
-        AppendMenuW(edit, MF_SEPARATOR, 0, null());
-        append(edit, ID_EDIT_SELECT_ALL, "Select &All\tCtrl+A");
-        append(edit, ID_EDIT_TIME_DATE, "Time/&Date\tF5");
-
-        append(format, ID_FORMAT_WRAP, "&Word Wrap");
-        append(format, ID_FORMAT_FONT, "&Font...");
-        append(view, ID_VIEW_STATUS, "&Status Bar");
-
-        append(help, ID_HELP_ABOUT, "&About Notepad Classic");
-
-        append_popup(bar, file, "&File");
-        append_popup(bar, edit, "&Edit");
-        append_popup(bar, format, "F&ormat");
-        append_popup(bar, view, "&View");
-        append_popup(bar, help, "&Help");
-        Ok(bar)
     }
-}
-
-unsafe fn append(menu: HMENU, id: usize, label: &str) {
-    let wide = dialogs::to_wide(label);
-    unsafe { AppendMenuW(menu, MF_STRING, id, wide.as_ptr()) };
-}
-
-unsafe fn append_popup(menu: HMENU, popup: HMENU, label: &str) {
-    let wide = dialogs::to_wide(label);
-    unsafe { AppendMenuW(menu, MF_POPUP, popup as usize, wide.as_ptr()) };
 }
 
 fn create_accelerators() -> Result<HACCEL, String> {
@@ -654,7 +639,11 @@ fn create_accelerators() -> Result<HACCEL, String> {
     ];
     let handle = unsafe { CreateAcceleratorTableW(entries.as_ptr(), entries.len() as i32) };
     if handle.is_null() {
-        Err(dialogs::os_error("Unable to create keyboard accelerators"))
+        let error = io::Error::last_os_error();
+        Err(dialogs::os_error(
+            &localized_string(IDS_CREATE_ACCELERATORS_FAILED),
+            &error,
+        ))
     } else {
         Ok(handle)
     }
@@ -733,7 +722,7 @@ fn open_document(state: &AppState) {
     match dialogs::open_file(hwnd) {
         Ok(Some(path)) => open_path(state, path),
         Ok(None) => {}
-        Err(message) => dialogs::show_error(Some(hwnd), APP_NAME, &message),
+        Err(message) => dialogs::show_error(Some(hwnd), &app_name(), &message),
     }
 }
 
@@ -751,8 +740,8 @@ fn open_command_line_path(state: &AppState, path: PathBuf) {
     } else {
         dialogs::show_error_with_path(
             Some(state.hwnd.get()),
-            APP_NAME,
-            "The command-line path is not a file:\n\n",
+            &app_name(),
+            IDS_COMMAND_LINE_NOT_FILE,
             &path,
         );
     }
@@ -783,8 +772,8 @@ fn open_path(state: &AppState, path: PathBuf) {
         }
         Err(error) => dialogs::show_error(
             Some(state.hwnd.get()),
-            APP_NAME,
-            &format!("Could not open the file:\n\n{error}"),
+            &app_name(),
+            &localized_error(IDS_OPEN_FILE_FAILED, error),
         ),
     }
 }
@@ -797,7 +786,7 @@ fn save_document(state: &AppState, force_dialog: bool) -> bool {
             Ok(Some(path)) => path,
             Ok(None) => return false,
             Err(message) => {
-                dialogs::show_error(Some(hwnd), APP_NAME, &message);
+                dialogs::show_error(Some(hwnd), &app_name(), &message);
                 return false;
             }
         }
@@ -808,7 +797,7 @@ fn save_document(state: &AppState, force_dialog: bool) -> bool {
             Ok(Some(path)) => path,
             Ok(None) => return false,
             Err(message) => {
-                dialogs::show_error(Some(hwnd), APP_NAME, &message);
+                dialogs::show_error(Some(hwnd), &app_name(), &message);
                 return false;
             }
         }
@@ -824,8 +813,8 @@ fn save_document(state: &AppState, force_dialog: bool) -> bool {
         Err(error) => {
             dialogs::show_error(
                 Some(hwnd),
-                APP_NAME,
-                &format!("Could not save the file:\n\n{error}"),
+                &app_name(),
+                &localized_error(IDS_SAVE_FILE_FAILED, error),
             );
             false
         }
@@ -935,7 +924,7 @@ fn toggle_word_wrap(state: &AppState) {
         }
         Err(message) => {
             state.word_wrap.set(!state.word_wrap.get());
-            dialogs::show_error(Some(state.hwnd.get()), APP_NAME, &message);
+            dialogs::show_error(Some(state.hwnd.get()), &app_name(), &message);
         }
     }
     state.suppress_change.set(false);
@@ -1009,7 +998,13 @@ fn update_status(state: &AppState) {
     let line = unsafe { SendMessageW(editor, EM_LINEFROMCHAR, caret as usize, 0) } as i32;
     let line_start = unsafe { SendMessageW(editor, EM_LINEINDEX, line as usize, 0) } as i32;
     let column = caret as i32 - line_start.max(0);
-    let text = dialogs::to_wide(&format!("Ln {}, Col {}", line + 1, column + 1));
+    let text = localization::format(
+        IDS_STATUS_POSITION,
+        &[
+            FormatArg::Unsigned((line + 1) as u64),
+            FormatArg::Unsigned((column + 1) as u64),
+        ],
+    );
     unsafe { SendMessageW(status, SB_SETTEXTW, 0, text.as_ptr() as isize) };
 }
 
@@ -1038,10 +1033,11 @@ fn choose_font(state: &AppState) {
     };
     let font = create_editor_font(choice, state.dpi.get());
     if font.is_null() {
+        let error = io::Error::last_os_error();
         dialogs::show_error(
             Some(hwnd),
-            APP_NAME,
-            &dialogs::os_error("Unable to create the font"),
+            &app_name(),
+            &dialogs::os_error(&localized_string(IDS_CREATE_FONT_FAILED), &error),
         );
         return;
     }
@@ -1145,8 +1141,8 @@ fn go_to_line(state: &AppState) {
         if line == 0 || line > line_count {
             dialogs::show_error(
                 Some(hwnd),
-                "Go To Line",
-                &format!("The line number must be between 1 and {line_count}."),
+                &localized_string(IDS_GOTO_TITLE),
+                &localized_error(IDS_GOTO_RANGE, line_count),
             );
             return;
         }
@@ -1219,8 +1215,8 @@ fn show_find_dialog(state: &AppState, replace: bool) {
         state.find_data.borrow_mut().take();
         dialogs::show_error(
             Some(state.hwnd.get()),
-            APP_NAME,
-            "Unable to open the Find dialog.",
+            &app_name(),
+            &localized_string(IDS_FIND_DIALOG_FAILED),
         );
     }
 }
@@ -1287,9 +1283,8 @@ fn find_next_with_flags(state: &AppState, flags: u32) -> bool {
         update_status(state);
         true
     } else {
-        let find = String::from_utf16_lossy(&needle);
-        let message = dialogs::to_wide(&format!("Cannot find \"{find}\""));
-        let title = dialogs::to_wide(APP_NAME);
+        let message = localization::format(IDS_FIND_NOT_FOUND, &[FormatArg::Wide(&needle)]);
+        let title = dialogs::to_wide(&app_name());
         unsafe {
             MessageBoxW(
                 state.hwnd.get(),
@@ -1336,8 +1331,8 @@ fn replace_all(state: &AppState, flags: u32) {
         unsafe { SendMessageW(editor, EM_SETMODIFY, 1, 0) };
         state.set_title();
     }
-    let message = dialogs::to_wide(&format!("Replaced {count} occurrence(s)."));
-    let title = dialogs::to_wide(APP_NAME);
+    let message = localization::format(IDS_REPLACE_COUNT, &[FormatArg::Unsigned(count as u64)]);
+    let title = dialogs::to_wide(&app_name());
     unsafe {
         MessageBoxW(
             state.hwnd.get(),
