@@ -78,11 +78,7 @@ pub const fn normalize_show_state(show_cmd: u32, flags: u32) -> bool {
 pub fn to_window_placement(saved: &SavedPlacement) -> WINDOWPLACEMENT {
     let mut wp: WINDOWPLACEMENT = unsafe { zeroed() };
     wp.length = size_of::<WINDOWPLACEMENT>() as u32;
-    wp.flags = if saved.is_maximized {
-        WPF_RESTORETOMAXIMIZED
-    } else {
-        0
-    };
+    wp.flags = 0;
     wp.showCmd = if saved.is_maximized {
         SW_SHOWMAXIMIZED
     } else {
@@ -352,7 +348,7 @@ mod tests {
             is_maximized: true,
         };
         let wp_max = to_window_placement(&saved_maximized);
-        assert_eq!(wp_max.flags, WPF_RESTORETOMAXIMIZED);
+        assert_eq!(wp_max.flags, 0);
         assert_eq!(wp_max.showCmd, SW_SHOWMAXIMIZED as u32);
         assert_eq!(wp_max.rcNormalPosition.left, -100);
         assert_eq!(wp_max.rcNormalPosition.top, -200);
