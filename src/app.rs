@@ -1140,16 +1140,18 @@ fn update_status(state: &AppState) {
         return;
     }
     let format = state.format.get();
-    let eol_text = localization::text(format.newline.status_resource_id());
-    let encoding_text = localization::text(format.encoding.status_resource_id());
     let zoom_text = localization::format(
         IDS_STATUS_ZOOM,
         &[FormatArg::Unsigned(
             zoom_percent(state.zoom_index.get()) as u64
         )],
     );
+    let eol_text = localization::text(format.newline.status_resource_id());
+    let encoding_text = localization::text(format.encoding.status_resource_id());
 
     let dpi = state.dpi.get();
+    let zoom_width =
+        measure_status_text_width(status, localization::without_trailing_nul(&zoom_text), dpi);
     let eol_width =
         measure_status_text_width(status, localization::without_trailing_nul(&eol_text), dpi);
     let enc_width = measure_status_text_width(
@@ -1157,18 +1159,16 @@ fn update_status(state: &AppState) {
         localization::without_trailing_nul(&encoding_text),
         dpi,
     );
-    let zoom_width =
-        measure_status_text_width(status, localization::without_trailing_nul(&zoom_text), dpi);
 
     let mut status_client: RECT = unsafe { zeroed() };
     unsafe { GetClientRect(status, &mut status_client) };
     let client_width = status_client.right - status_client.left;
-    let parts = calculate_status_parts(client_width, &[eol_width, enc_width, zoom_width]);
+    let parts = calculate_status_parts(client_width, &[zoom_width, eol_width, enc_width]);
     unsafe {
         SendMessageW(status, SB_SETPARTS, parts.len(), parts.as_ptr() as isize);
-        SendMessageW(status, SB_SETTEXTW, 1, eol_text.as_ptr() as isize);
-        SendMessageW(status, SB_SETTEXTW, 2, encoding_text.as_ptr() as isize);
-        SendMessageW(status, SB_SETTEXTW, 3, zoom_text.as_ptr() as isize);
+        SendMessageW(status, SB_SETTEXTW, 1, zoom_text.as_ptr() as isize);
+        SendMessageW(status, SB_SETTEXTW, 2, eol_text.as_ptr() as isize);
+        SendMessageW(status, SB_SETTEXTW, 3, encoding_text.as_ptr() as isize);
     }
     update_status_position(state);
 }
@@ -1197,19 +1197,16 @@ fn calculate_status_parts(client_width: i32, right_widths: &[i32]) -> Vec<i32> {
     if right_widths.is_empty() {
         return vec![-1];
     }
-    let total_right: i32 = right_widths.iter().map(|&w| w.max(0)).sum();
-    let part0_right = (client_width.max(0) - total_right).max(0);
+    let client_width = client_width.max(0);
     let mut parts = Vec::with_capacity(right_widths.len() + 1);
-    parts.push(part0_right);
-    let mut current = part0_right;
-    for (i, &w) in right_widths.iter().enumerate() {
-        if i + 1 == right_widths.len() {
-            parts.push(-1);
-        } else {
-            current = current.saturating_add(w.max(0));
-            parts.push(current);
-        }
+    let mut remaining_suffix: i32 = right_widths.iter().map(|&w| w.max(0)).sum();
+
+    parts.push((client_width - remaining_suffix).max(0));
+    for &width in &right_widths[..right_widths.len() - 1] {
+        remaining_suffix = remaining_suffix.saturating_sub(width.max(0));
+        parts.push((client_width - remaining_suffix).max(0));
     }
+    parts.push(-1);
     parts
 }
 
@@ -1924,23 +1921,23 @@ mod tests {
 
     #[test]
     fn calculate_status_parts_divides_normal_window_width() {
-        let parts = calculate_status_parts(800, &[120, 100, 72]);
-        assert_eq!(parts, vec![508, 628, 728, -1]);
+        let parts = calculate_status_parts(800, &[72, 120, 100]);
+        assert_eq!(parts, vec![508, 580, 700, -1]);
     }
 
     #[test]
     fn calculate_status_parts_degrades_gracefully_in_narrow_windows() {
-        let parts = calculate_status_parts(200, &[120, 100, 72]);
-        assert_eq!(parts, vec![0, 120, 220, -1]);
+        let parts = calculate_status_parts(200, &[72, 120, 100]);
+        assert_eq!(parts, vec![0, 0, 100, -1]);
     }
 
     #[test]
     fn calculate_status_parts_handles_zero_and_negative_client_widths() {
-        let parts_zero = calculate_status_parts(0, &[120, 100, 72]);
-        assert_eq!(parts_zero, vec![0, 120, 220, -1]);
+        let parts_zero = calculate_status_parts(0, &[72, 120, 100]);
+        assert_eq!(parts_zero, vec![0, 0, 0, -1]);
 
-        let parts_neg = calculate_status_parts(-50, &[120, 100, 72]);
-        assert_eq!(parts_neg, vec![0, 120, 220, -1]);
+        let parts_neg = calculate_status_parts(-50, &[72, 120, 100]);
+        assert_eq!(parts_neg, vec![0, 0, 0, -1]);
     }
 
     #[test]
