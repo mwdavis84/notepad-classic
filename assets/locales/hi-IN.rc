@@ -1,0 +1,88 @@
+LANGUAGE 57, 1
+
+IDR_MAIN_MENU MENU
+BEGIN
+    POPUP "फ़ाइल(&F)"
+    BEGIN
+        MENUITEM "नया(&N)\tCtrl+N", ID_FILE_NEW
+        MENUITEM "खोलें(&O)...\tCtrl+O", ID_FILE_OPEN
+        MENUITEM "सहेजें(&S)\tCtrl+S", ID_FILE_SAVE
+        MENUITEM "इस रूप में सहेजें(&A)...\tCtrl+Shift+S", ID_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM "बाहर निकलें(&X)", ID_FILE_EXIT
+    END
+    POPUP "संपादित करें(&E)"
+    BEGIN
+        MENUITEM "पूर्ववत करें(&U)\tCtrl+Z", ID_EDIT_UNDO
+        MENUITEM SEPARATOR
+        MENUITEM "काटें(&T)\tCtrl+X", ID_EDIT_CUT
+        MENUITEM "प्रतिलिपि बनाएँ(&C)\tCtrl+C", ID_EDIT_COPY
+        MENUITEM "चिपकाएँ(&P)\tCtrl+V", ID_EDIT_PASTE
+        MENUITEM "हटाएँ(&L)\tDel", ID_EDIT_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "ढूँढें(&F)...\tCtrl+F", ID_EDIT_FIND
+        MENUITEM "अगला ढूँढें(&N)\tF3", ID_EDIT_FIND_NEXT
+        MENUITEM "पिछला ढूँढें(&V)\tShift+F3", ID_EDIT_FIND_PREVIOUS
+        MENUITEM "बदलें(&R)...\tCtrl+H", ID_EDIT_REPLACE
+        MENUITEM "पंक्ति पर जाएँ(&G)...\tCtrl+G", ID_EDIT_GOTO
+        MENUITEM SEPARATOR
+        MENUITEM "सभी चुनें(&A)\tCtrl+A", ID_EDIT_SELECT_ALL
+        MENUITEM "समय/दिनांक(&D)\tF5", ID_EDIT_TIME_DATE
+    END
+    POPUP "प्रारूप(&O)"
+    BEGIN
+        MENUITEM "शब्द लपेटें(&W)", ID_FORMAT_WRAP
+        MENUITEM "फ़ॉन्ट(&F)...", ID_FORMAT_FONT
+    END
+    POPUP "देखें(&V)"
+    BEGIN
+        MENUITEM "स्थिति पट्टी(&S)", ID_VIEW_STATUS
+    END
+    POPUP "मदद(&H)"
+    BEGIN
+        MENUITEM "Notepad Classic के बारे में(&A)", ID_HELP_ABOUT
+    END
+END
+
+STRINGTABLE
+BEGIN
+    IDS_APP_NAME "Notepad Classic"
+    IDS_UNTITLED "बिना शीर्षक"
+    IDS_WINDOW_TITLE "%1 - Notepad Classic"
+    IDS_SAVE_CHANGES "क्या आप %1 में परिवर्तनों को सहेजना चाहते हैं?"
+    IDS_CREATE_MISSING_FILE "%1 फ़ाइल नहीं मिल सकी।\n\nक्या आप एक नई फ़ाइल बनाना चाहते हैं?"
+    IDS_COMMAND_LINE_NOT_FILE "कमांड-लाइन पथ एक फ़ाइल नहीं है:\n\n%1"
+    IDS_OPEN_FILE_FAILED "फ़ाइल नहीं खोली जा सकी:\n\n%1"
+    IDS_SAVE_FILE_FAILED "फ़ाइल सहेजी नहीं जा सकी:\n\n%1"
+    IDS_STATUS_POSITION "पंक्ति %1, स्तंभ %2"
+    IDS_GOTO_TITLE "पंक्ति पर जाएँ"
+    IDS_GOTO_LABEL "पंक्ति संख्या(&L):"
+    IDS_GOTO_RANGE "पंक्ति संख्या 1 और %1 के बीच होनी चाहिए।"
+    IDS_FIND_NOT_FOUND """%1"" नहीं मिला"
+    IDS_REPLACE_COUNT "प्रतिस्थापित प्रविष्टियाँ: %1"
+    IDS_ABOUT_TITLE "Notepad Classic के बारे में"
+    IDS_ABOUT_VERSION "Notepad Classic\nसंस्करण %1"
+    IDS_ABOUT_PUBLISHER "प्रकाशक: DeekFit\nMIT लाइसेंस के तहत जारी।"
+    IDS_ABOUT_REPOSITORY "GitHub रिपॉजिटरी"
+    IDS_ABOUT_LICENSE "MIT लाइसेंस"
+    IDS_ABOUT_THREADS "Threads पर @deekfit_apps को फ़ॉलो करें"
+    IDS_CLOSE "बंद करें"
+    IDS_OPEN_LINK_FAILED "लिंक खोलने में असमर्थ।"
+    IDS_OK "ठीक है"
+    IDS_CANCEL "रद्द करें"
+    IDS_FIND_DIALOG_FAILED "ढूँढें संवाद खोलने में असमर्थ।"
+    IDS_GET_MODULE_FAILED "अनुप्रयोग मॉड्यूल प्राप्त करने में असमर्थ"
+    IDS_REGISTER_FIND_FAILED "ढूँढें संदेश पंजीकृत करने में असमर्थ"
+    IDS_LOAD_ICON_FAILED "अनुप्रयोग आइकन लोड करने में असमर्थ"
+    IDS_REGISTER_CLASS_FAILED "विंडो वर्ग पंजीकृत करने में असमर्थ"
+    IDS_CREATE_WINDOW_FAILED "मुख्य विंडो बनाने में असमर्थ"
+    IDS_MESSAGE_LOOP_FAILED "संदेश लूप विफल रहा"
+    IDS_CREATE_STATUS_FAILED "स्थिति पट्टी बनाने में असमर्थ"
+    IDS_CREATE_EDITOR_FAILED "संपादक बनाने में असमर्थ"
+    IDS_LOAD_MENU_FAILED "स्थानीयकृत मेनू लोड करने में असमर्थ"
+    IDS_CREATE_ACCELERATORS_FAILED "कीबोर्ड त्वरक बनाने में असमर्थ"
+    IDS_CREATE_FONT_FAILED "फ़ॉन्ट बनाने में असमर्थ"
+    IDS_FILE_DIALOG_FAILED "फ़ाइल संवाद विफल रहा (त्रुटि %1)।"
+    IDS_FILTER_TEXT_DOCUMENTS "पाठ दस्तावेज़"
+    IDS_FILTER_ALL_FILES "सभी फ़ाइलें"
+END

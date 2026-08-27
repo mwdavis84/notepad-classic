@@ -1,0 +1,88 @@
+LANGUAGE 4, 2
+
+IDR_MAIN_MENU MENU
+BEGIN
+    POPUP "文件(&F)"
+    BEGIN
+        MENUITEM "新建(&N)\tCtrl+N", ID_FILE_NEW
+        MENUITEM "打开(&O)...\tCtrl+O", ID_FILE_OPEN
+        MENUITEM "保存(&S)\tCtrl+S", ID_FILE_SAVE
+        MENUITEM "另存为(&A)...\tCtrl+Shift+S", ID_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM "退出(&X)", ID_FILE_EXIT
+    END
+    POPUP "编辑(&E)"
+    BEGIN
+        MENUITEM "撤消(&U)\tCtrl+Z", ID_EDIT_UNDO
+        MENUITEM SEPARATOR
+        MENUITEM "剪切(&T)\tCtrl+X", ID_EDIT_CUT
+        MENUITEM "复制(&C)\tCtrl+C", ID_EDIT_COPY
+        MENUITEM "粘贴(&P)\tCtrl+V", ID_EDIT_PASTE
+        MENUITEM "删除(&L)\tDel", ID_EDIT_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "查找(&F)...\tCtrl+F", ID_EDIT_FIND
+        MENUITEM "查找下一个(&N)\tF3", ID_EDIT_FIND_NEXT
+        MENUITEM "查找上一个(&V)\tShift+F3", ID_EDIT_FIND_PREVIOUS
+        MENUITEM "替换(&R)...\tCtrl+H", ID_EDIT_REPLACE
+        MENUITEM "转到(&G)...\tCtrl+G", ID_EDIT_GOTO
+        MENUITEM SEPARATOR
+        MENUITEM "全选(&A)\tCtrl+A", ID_EDIT_SELECT_ALL
+        MENUITEM "时间/日期(&D)\tF5", ID_EDIT_TIME_DATE
+    END
+    POPUP "格式(&O)"
+    BEGIN
+        MENUITEM "自动换行(&W)", ID_FORMAT_WRAP
+        MENUITEM "字体(&F)...", ID_FORMAT_FONT
+    END
+    POPUP "查看(&V)"
+    BEGIN
+        MENUITEM "状态栏(&S)", ID_VIEW_STATUS
+    END
+    POPUP "帮助(&H)"
+    BEGIN
+        MENUITEM "关于 Notepad Classic(&A)", ID_HELP_ABOUT
+    END
+END
+
+STRINGTABLE
+BEGIN
+    IDS_APP_NAME "Notepad Classic"
+    IDS_UNTITLED "无标题"
+    IDS_WINDOW_TITLE "%1 - Notepad Classic"
+    IDS_SAVE_CHANGES "是否将更改保存到 %1?"
+    IDS_CREATE_MISSING_FILE "找不到文件 %1。\n\n是否创建新文件?"
+    IDS_COMMAND_LINE_NOT_FILE "命令行路径不是文件:\n\n%1"
+    IDS_OPEN_FILE_FAILED "无法打开文件:\n\n%1"
+    IDS_SAVE_FILE_FAILED "无法保存文件:\n\n%1"
+    IDS_STATUS_POSITION "第 %1 行，第 %2 列"
+    IDS_GOTO_TITLE "转到指定行"
+    IDS_GOTO_LABEL "行号(&L):"
+    IDS_GOTO_RANGE "行号必须介于 1 和 %1 之间。"
+    IDS_FIND_NOT_FOUND "找不到 ""%1"""
+    IDS_REPLACE_COUNT "已替换的匹配项数: %1"
+    IDS_ABOUT_TITLE "关于 Notepad Classic"
+    IDS_ABOUT_VERSION "Notepad Classic\n版本 %1"
+    IDS_ABOUT_PUBLISHER "发布者: DeekFit\n基于 MIT 许可证发布。"
+    IDS_ABOUT_REPOSITORY "GitHub 仓库"
+    IDS_ABOUT_LICENSE "MIT 许可证"
+    IDS_ABOUT_THREADS "在 Threads 上关注 @deekfit_apps"
+    IDS_CLOSE "关闭"
+    IDS_OPEN_LINK_FAILED "无法打开链接。"
+    IDS_OK "确定"
+    IDS_CANCEL "取消"
+    IDS_FIND_DIALOG_FAILED "无法打开“查找”对话框。"
+    IDS_GET_MODULE_FAILED "无法获取应用程序模块"
+    IDS_REGISTER_FIND_FAILED "无法注册查找消息"
+    IDS_LOAD_ICON_FAILED "无法加载应用程序图标"
+    IDS_REGISTER_CLASS_FAILED "无法注册窗口类"
+    IDS_CREATE_WINDOW_FAILED "无法创建主窗口"
+    IDS_MESSAGE_LOOP_FAILED "消息循环失败"
+    IDS_CREATE_STATUS_FAILED "无法创建状态栏"
+    IDS_CREATE_EDITOR_FAILED "无法创建编辑器"
+    IDS_LOAD_MENU_FAILED "无法加载本地化菜单"
+    IDS_CREATE_ACCELERATORS_FAILED "无法创建键盘快捷键"
+    IDS_CREATE_FONT_FAILED "无法创建字体"
+    IDS_FILE_DIALOG_FAILED "文件对话框失败 (错误 %1)。"
+    IDS_FILTER_TEXT_DOCUMENTS "文本文档"
+    IDS_FILTER_ALL_FILES "所有文件"
+END

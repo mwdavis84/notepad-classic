@@ -4,3 +4,11 @@
 
 IDI_APP_ICON ICON "notepad-classic.ico"
 #include "locales/en-US.rc"
+#include "locales/es-ES.rc"
+#include "locales/de-DE.rc"
+#include "locales/fr-FR.rc"
+#include "locales/pt-BR.rc"
+#include "locales/zh-CN.rc"
+#include "locales/ja-JP.rc"
+#include "locales/ko-KR.rc"
+#include "locales/hi-IN.rc"
