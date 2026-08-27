@@ -32,7 +32,7 @@ use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    SetFocus, VK_ADD, VK_DELETE, VK_F3, VK_F5, VK_OEM_MINUS, VK_OEM_PLUS,
+    SetFocus, VK_ADD, VK_DELETE, VK_F3, VK_F5, VK_OEM_MINUS, VK_OEM_PLUS, VK_SUBTRACT,
 };
 use windows_sys::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDROP};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
@@ -106,6 +106,7 @@ struct AppState {
     dpi: Cell<u32>,
     font_choice: Cell<FontChoice>,
     zoom_index: Cell<usize>,
+    wheel_delta_remainder: Cell<i32>,
     find_message: u32,
     find_dialog: Cell<HWND>,
     find_data: RefCell<Option<Box<FINDREPLACEW>>>,
@@ -132,6 +133,7 @@ impl AppState {
             dpi: Cell::new(96),
             font_choice: Cell::new(default_font_choice()),
             zoom_index: Cell::new(DEFAULT_ZOOM_INDEX),
+            wheel_delta_remainder: Cell::new(0),
             find_message,
             find_dialog: Cell::new(null_mut()),
             find_data: RefCell::new(None),
@@ -297,16 +299,20 @@ pub fn run() -> Result<(), String> {
         if unsafe { TranslateAcceleratorW(hwnd, accelerator, &message) } != 0 {
             continue;
         }
-        if message.message == WM_MOUSEWHEEL
-            && unsafe { GetParent(message.hwnd) } == hwnd
-            && (message.wParam as u32 & 0xFFFF & MK_CONTROL) != 0
-        {
-            let delta = ((message.wParam >> 16) as u16 as i16) as i32;
-            let steps = delta / WHEEL_DELTA as i32;
-            if steps != 0 {
-                change_zoom(&state, steps);
+        if message.message == WM_MOUSEWHEEL {
+            if (message.wParam as u32 & 0xFFFF & MK_CONTROL) != 0
+                && (message.hwnd == hwnd || unsafe { IsChild(hwnd, message.hwnd) } != 0)
+            {
+                let delta = ((message.wParam >> 16) as u16 as i16) as i32;
+                let (steps, remainder) =
+                    accumulate_wheel_delta(state.wheel_delta_remainder.get(), delta);
+                state.wheel_delta_remainder.set(remainder);
+                if steps != 0 {
+                    change_zoom(&state, steps);
+                }
+                continue;
             }
-            continue;
+            state.wheel_delta_remainder.set(0);
         }
         let update_after = message.message == WM_KEYDOWN
             || message.message == WM_KEYUP
@@ -622,6 +628,11 @@ fn stepped_zoom_index(index: usize, steps: i32) -> usize {
     }
 }
 
+fn accumulate_wheel_delta(remainder: i32, delta: i32) -> (i32, i32) {
+    let total = remainder.saturating_add(delta);
+    (total / WHEEL_DELTA as i32, total % WHEEL_DELTA as i32)
+}
+
 fn change_zoom(state: &AppState, steps: i32) {
     let current = state.zoom_index.get();
     let next = stepped_zoom_index(current, steps);
@@ -731,6 +742,7 @@ fn create_accelerators() -> Result<HACCEL, String> {
         accel(CS, VK_OEM_PLUS as u8, ID_VIEW_ZOOM_IN),
         accel(C, VK_ADD as u8, ID_VIEW_ZOOM_IN),
         accel(C, VK_OEM_MINUS as u8, ID_VIEW_ZOOM_OUT),
+        accel(C, VK_SUBTRACT as u8, ID_VIEW_ZOOM_OUT),
         accel(C, b'0', ID_VIEW_ZOOM_DEFAULT),
     ];
     let handle = unsafe { CreateAcceleratorTableW(entries.as_ptr(), entries.len() as i32) };
@@ -1106,6 +1118,16 @@ fn update_menu_state(state: &AppState) {
                     MF_ENABLED
                 },
         );
+        EnableMenuItem(
+            state.menu,
+            ID_VIEW_ZOOM_DEFAULT as u32,
+            MF_BYCOMMAND
+                | if state.zoom_index.get() == DEFAULT_ZOOM_INDEX {
+                    MF_GRAYED
+                } else {
+                    MF_ENABLED
+                },
+        );
         DrawMenuBar(state.hwnd.get());
     }
 }
@@ -1134,14 +1156,20 @@ fn update_status(state: &AppState) {
         ],
     );
     unsafe { SendMessageW(status, SB_SETTEXTW, 0, text.as_ptr() as isize) };
-    let zoom = format!("{}%", zoom_percent(state.zoom_index.get()));
-    let zoom = dialogs::to_wide(&zoom);
+    let zoom = localization::format(
+        IDS_STATUS_ZOOM,
+        &[FormatArg::Unsigned(
+            zoom_percent(state.zoom_index.get()) as u64
+        )],
+    );
     unsafe { SendMessageW(status, SB_SETTEXTW, 1, zoom.as_ptr() as isize) };
 }
 
 fn choose_font(state: &AppState) {
     let hwnd = state.hwnd.get();
-    let mut logical = state.font_choice.get().logical;
+    let current = state.font_choice.get();
+    let mut logical = current.logical;
+    logical.lfHeight = rendered_font_height(current.point_size_tenths, state.dpi.get(), 100);
     let Some(point_size_tenths) = dialogs::choose_font(hwnd, &mut logical) else {
         return;
     };
@@ -1752,6 +1780,37 @@ mod tests {
             stepped_zoom_index(ZOOM_LEVELS.len() - 1, 99),
             ZOOM_LEVELS.len() - 1
         );
+    }
+
+    #[test]
+    fn wheel_delta_accumulates_small_positive_inputs() {
+        let (steps, remainder) = accumulate_wheel_delta(0, 30);
+        assert_eq!((steps, remainder), (0, 30));
+        let (steps, remainder) = accumulate_wheel_delta(remainder, 30);
+        assert_eq!((steps, remainder), (0, 60));
+        assert_eq!(accumulate_wheel_delta(remainder, 60), (1, 0));
+    }
+
+    #[test]
+    fn wheel_delta_accumulates_small_negative_inputs() {
+        let (steps, remainder) = accumulate_wheel_delta(0, -40);
+        assert_eq!((steps, remainder), (0, -40));
+        let (steps, remainder) = accumulate_wheel_delta(remainder, -40);
+        assert_eq!((steps, remainder), (0, -80));
+        assert_eq!(accumulate_wheel_delta(remainder, -40), (-1, 0));
+    }
+
+    #[test]
+    fn wheel_delta_handles_multiple_detents_and_direction_changes() {
+        assert_eq!(accumulate_wheel_delta(0, 240), (2, 0));
+        assert_eq!(accumulate_wheel_delta(100, -40), (0, 60));
+        assert_eq!(accumulate_wheel_delta(60, -180), (-1, 0));
+    }
+
+    #[test]
+    fn wheel_delta_keeps_only_a_bounded_remainder() {
+        let (_, remainder) = accumulate_wheel_delta(i32::MAX, i32::MAX);
+        assert!((-119..=119).contains(&remainder));
     }
 
     #[test]

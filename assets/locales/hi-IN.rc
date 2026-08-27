@@ -61,6 +61,7 @@ BEGIN
     IDS_OPEN_FILE_FAILED "फ़ाइल नहीं खोली जा सकी:\n\n%1"
     IDS_SAVE_FILE_FAILED "फ़ाइल सहेजी नहीं जा सकी:\n\n%1"
     IDS_STATUS_POSITION "पंक्ति %1, स्तंभ %2"
+    IDS_STATUS_ZOOM "%1%%"
     IDS_GOTO_TITLE "पंक्ति पर जाएँ"
     IDS_GOTO_LABEL "पंक्ति संख्या(&L):"
     IDS_GOTO_RANGE "पंक्ति संख्या 1 और %1 के बीच होनी चाहिए।"
