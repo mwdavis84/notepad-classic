@@ -13,12 +13,12 @@ use windows_sys::Win32::Globalization::{
 };
 use windows_sys::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, COLOR_WINDOW, CreateFontIndirectW, DEFAULT_CHARSET, DEFAULT_GUI_FONT,
-    DeleteObject, FF_MODERN, FIXED_PITCH, FW_NORMAL, GetObjectW, GetStockObject, GetSysColorBrush,
-    HFONT, LOGFONTW, UpdateWindow,
+    DeleteObject, FF_MODERN, FIXED_PITCH, FW_NORMAL, GetStockObject, GetSysColorBrush, HFONT,
+    LOGFONTW, UpdateWindow,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::SystemInformation::GetLocalTime;
-use windows_sys::Win32::System::SystemServices::MK_LBUTTON;
+use windows_sys::Win32::System::SystemServices::{MK_CONTROL, MK_LBUTTON};
 use windows_sys::Win32::UI::Controls::Dialogs::{
     FINDMSGSTRINGW, FINDREPLACEW, FR_DIALOGTERM, FR_DOWN, FR_FINDNEXT, FR_MATCHCASE, FR_REPLACE,
     FR_REPLACEALL, FR_WHOLEWORD, FindTextW, ReplaceTextW,
@@ -26,12 +26,14 @@ use windows_sys::Win32::UI::Controls::Dialogs::{
 use windows_sys::Win32::UI::Controls::{
     EM_GETLINECOUNT, EM_GETSEL, EM_LINEFROMCHAR, EM_LINEINDEX, EM_REPLACESEL, EM_SCROLLCARET,
     EM_SETLIMITTEXT, EM_SETMODIFY, EM_SETSEL, ICC_BAR_CLASSES, ICC_LINK_CLASS,
-    INITCOMMONCONTROLSEX, InitCommonControlsEx, SB_SETTEXTW, STATUSCLASSNAMEW,
+    INITCOMMONCONTROLSEX, InitCommonControlsEx, SB_SETPARTS, SB_SETTEXTW, STATUSCLASSNAMEW,
 };
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_DELETE, VK_F3, VK_F5};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    SetFocus, VK_ADD, VK_DELETE, VK_F3, VK_F5, VK_OEM_MINUS, VK_OEM_PLUS,
+};
 use windows_sys::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDROP};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -60,6 +62,12 @@ const CLASS_NAME: &[u16] = &[
 
 const WM_APP_UPDATE_STATUS: u32 = WM_APP + 1;
 const FIND_OPTION_FLAGS: u32 = FR_DOWN | FR_MATCHCASE | FR_WHOLEWORD;
+const ZOOM_LEVELS: [u16; 24] = [
+    10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 250,
+    300, 400, 500,
+];
+const DEFAULT_ZOOM_INDEX: usize = 9;
+const STATUS_ZOOM_PART_WIDTH_96_DPI: i32 = 72;
 
 fn app_name() -> String {
     localized_string(IDS_APP_NAME)
@@ -97,6 +105,7 @@ struct AppState {
     owned_font: Cell<HFONT>,
     dpi: Cell<u32>,
     font_choice: Cell<FontChoice>,
+    zoom_index: Cell<usize>,
     find_message: u32,
     find_dialog: Cell<HWND>,
     find_data: RefCell<Option<Box<FINDREPLACEW>>>,
@@ -122,6 +131,7 @@ impl AppState {
             owned_font: Cell::new(null_mut()),
             dpi: Cell::new(96),
             font_choice: Cell::new(default_font_choice()),
+            zoom_index: Cell::new(DEFAULT_ZOOM_INDEX),
             find_message,
             find_dialog: Cell::new(null_mut()),
             find_data: RefCell::new(None),
@@ -285,6 +295,17 @@ pub fn run() -> Result<(), String> {
             continue;
         }
         if unsafe { TranslateAcceleratorW(hwnd, accelerator, &message) } != 0 {
+            continue;
+        }
+        if message.message == WM_MOUSEWHEEL
+            && unsafe { GetParent(message.hwnd) } == hwnd
+            && (message.wParam as u32 & 0xFFFF & MK_CONTROL) != 0
+        {
+            let delta = ((message.wParam >> 16) as u16 as i16) as i32;
+            let steps = delta / WHEEL_DELTA as i32;
+            if steps != 0 {
+                change_zoom(&state, steps);
+            }
             continue;
         }
         let update_after = message.message == WM_KEYDOWN
@@ -458,7 +479,11 @@ fn create_children(state: &AppState) -> Result<(), String> {
     state.status.set(status);
     unsafe {
         SendMessageW(editor, EM_SETLIMITTEXT, 0x7FFF_FFFE, 0);
-        let default_font = create_editor_font(state.font_choice.get(), dpi);
+        let default_font = create_editor_font(
+            state.font_choice.get(),
+            dpi,
+            zoom_percent(state.zoom_index.get()),
+        );
         let font = if default_font.is_null() {
             GetStockObject(DEFAULT_GUI_FONT) as HFONT
         } else {
@@ -532,15 +557,37 @@ fn default_font_choice() -> FontChoice {
     }
 }
 
-fn create_editor_font(choice: FontChoice, dpi: u32) -> HFONT {
+fn create_editor_font(choice: FontChoice, dpi: u32, zoom_percentage: u16) -> HFONT {
     let mut logical = choice.logical;
-    logical.lfHeight = -((choice.point_size_tenths * dpi as i32 + 360) / 720).max(1);
+    logical.lfHeight = rendered_font_height(choice.point_size_tenths, dpi, zoom_percentage);
     logical.lfWidth = 0;
     unsafe { CreateFontIndirectW(&logical) }
 }
 
+fn rendered_font_height(point_size_tenths: i32, dpi: u32, zoom_percentage: u16) -> i32 {
+    let numerator = i64::from(point_size_tenths.max(1))
+        * i64::from(dpi.max(1))
+        * i64::from(zoom_percentage.max(1));
+    let pixels = ((numerator + 36_000) / 72_000).clamp(1, i64::from(i32::MAX));
+    -(pixels as i32)
+}
+
 fn replace_editor_font(state: &AppState, dpi: u32) -> bool {
-    let font = create_editor_font(state.font_choice.get(), dpi);
+    replace_editor_font_for(
+        state,
+        state.font_choice.get(),
+        dpi,
+        zoom_percent(state.zoom_index.get()),
+    )
+}
+
+fn replace_editor_font_for(
+    state: &AppState,
+    choice: FontChoice,
+    dpi: u32,
+    zoom_percentage: u16,
+) -> bool {
+    let font = create_editor_font(choice, dpi, zoom_percentage);
     if font.is_null() {
         return false;
     }
@@ -555,6 +602,49 @@ fn replace_editor_font(state: &AppState, dpi: u32) -> bool {
         unsafe { DeleteObject(previous) };
     }
     true
+}
+
+const fn zoom_percent(index: usize) -> u16 {
+    ZOOM_LEVELS[if index < ZOOM_LEVELS.len() {
+        index
+    } else {
+        DEFAULT_ZOOM_INDEX
+    }]
+}
+
+fn stepped_zoom_index(index: usize, steps: i32) -> usize {
+    if steps >= 0 {
+        index
+            .saturating_add(steps as usize)
+            .min(ZOOM_LEVELS.len() - 1)
+    } else {
+        index.saturating_sub(steps.unsigned_abs() as usize)
+    }
+}
+
+fn change_zoom(state: &AppState, steps: i32) {
+    let current = state.zoom_index.get();
+    let next = stepped_zoom_index(current, steps);
+    if next == current {
+        return;
+    }
+    if !replace_editor_font_for(
+        state,
+        state.font_choice.get(),
+        state.dpi.get(),
+        zoom_percent(next),
+    ) {
+        let error = io::Error::last_os_error();
+        dialogs::show_error(
+            Some(state.hwnd.get()),
+            &app_name(),
+            &dialogs::os_error(&localized_string(IDS_CREATE_FONT_FAILED), &error),
+        );
+        return;
+    }
+    state.zoom_index.set(next);
+    update_menu_state(state);
+    update_status(state);
 }
 
 fn handle_dpi_changed(state: &AppState, wparam: WPARAM, lparam: LPARAM) {
@@ -599,6 +689,7 @@ fn layout_children(state: &AppState) {
     unsafe {
         MoveWindow(editor, 0, 0, width, (height - status_height).max(0), 1);
     }
+    update_status(state);
 }
 
 fn create_menu() -> Result<HMENU, String> {
@@ -636,6 +727,11 @@ fn create_accelerators() -> Result<HACCEL, String> {
         accel(C, b'G', ID_EDIT_GOTO),
         accel(C, b'A', ID_EDIT_SELECT_ALL),
         accel(V, VK_F5 as u8, ID_EDIT_TIME_DATE),
+        accel(C, VK_OEM_PLUS as u8, ID_VIEW_ZOOM_IN),
+        accel(CS, VK_OEM_PLUS as u8, ID_VIEW_ZOOM_IN),
+        accel(C, VK_ADD as u8, ID_VIEW_ZOOM_IN),
+        accel(C, VK_OEM_MINUS as u8, ID_VIEW_ZOOM_OUT),
+        accel(C, b'0', ID_VIEW_ZOOM_DEFAULT),
     ];
     let handle = unsafe { CreateAcceleratorTableW(entries.as_ptr(), entries.len() as i32) };
     if handle.is_null() {
@@ -697,6 +793,12 @@ fn handle_command(state: &AppState, id: usize) {
         ID_EDIT_TIME_DATE => insert_time_date(state),
         ID_FORMAT_WRAP => toggle_word_wrap(state),
         ID_FORMAT_FONT => choose_font(state),
+        ID_VIEW_ZOOM_IN => change_zoom(state, 1),
+        ID_VIEW_ZOOM_OUT => change_zoom(state, -1),
+        ID_VIEW_ZOOM_DEFAULT => change_zoom(
+            state,
+            DEFAULT_ZOOM_INDEX as i32 - state.zoom_index.get() as i32,
+        ),
         ID_VIEW_STATUS => toggle_status(state),
         ID_HELP_ABOUT => dialogs::show_about(state.hwnd.get(), state.instance),
         _ => {}
@@ -984,6 +1086,26 @@ fn update_menu_state(state: &AppState) {
                     MF_ENABLED
                 },
         );
+        EnableMenuItem(
+            state.menu,
+            ID_VIEW_ZOOM_IN as u32,
+            MF_BYCOMMAND
+                | if state.zoom_index.get() + 1 == ZOOM_LEVELS.len() {
+                    MF_GRAYED
+                } else {
+                    MF_ENABLED
+                },
+        );
+        EnableMenuItem(
+            state.menu,
+            ID_VIEW_ZOOM_OUT as u32,
+            MF_BYCOMMAND
+                | if state.zoom_index.get() == 0 {
+                    MF_GRAYED
+                } else {
+                    MF_ENABLED
+                },
+        );
         DrawMenuBar(state.hwnd.get());
     }
 }
@@ -998,6 +1120,12 @@ fn update_status(state: &AppState) {
     let line = unsafe { SendMessageW(editor, EM_LINEFROMCHAR, caret as usize, 0) } as i32;
     let line_start = unsafe { SendMessageW(editor, EM_LINEINDEX, line as usize, 0) } as i32;
     let column = caret as i32 - line_start.max(0);
+    let mut status_client: RECT = unsafe { zeroed() };
+    unsafe { GetClientRect(status, &mut status_client) };
+    let zoom_width =
+        ((i64::from(STATUS_ZOOM_PART_WIDTH_96_DPI) * i64::from(state.dpi.get()) + 48) / 96) as i32;
+    let parts = [(status_client.right - zoom_width).max(0), -1];
+    unsafe { SendMessageW(status, SB_SETPARTS, parts.len(), parts.as_ptr() as isize) };
     let text = localization::format(
         IDS_STATUS_POSITION,
         &[
@@ -1006,22 +1134,14 @@ fn update_status(state: &AppState) {
         ],
     );
     unsafe { SendMessageW(status, SB_SETTEXTW, 0, text.as_ptr() as isize) };
+    let zoom = format!("{}%", zoom_percent(state.zoom_index.get()));
+    let zoom = dialogs::to_wide(&zoom);
+    unsafe { SendMessageW(status, SB_SETTEXTW, 1, zoom.as_ptr() as isize) };
 }
 
 fn choose_font(state: &AppState) {
-    let editor = state.editor.get();
     let hwnd = state.hwnd.get();
-    let current_font = unsafe { SendMessageW(editor, WM_GETFONT, 0, 0) } as HFONT;
-    let mut logical: LOGFONTW = unsafe { zeroed() };
-    if !current_font.is_null() {
-        unsafe {
-            GetObjectW(
-                current_font,
-                size_of::<LOGFONTW>() as i32,
-                (&mut logical as *mut LOGFONTW).cast(),
-            );
-        }
-    }
+    let mut logical = state.font_choice.get().logical;
     let Some(point_size_tenths) = dialogs::choose_font(hwnd, &mut logical) else {
         return;
     };
@@ -1031,8 +1151,12 @@ fn choose_font(state: &AppState) {
         logical,
         point_size_tenths,
     };
-    let font = create_editor_font(choice, state.dpi.get());
-    if font.is_null() {
+    if !replace_editor_font_for(
+        state,
+        choice,
+        state.dpi.get(),
+        zoom_percent(state.zoom_index.get()),
+    ) {
         let error = io::Error::last_os_error();
         dialogs::show_error(
             Some(hwnd),
@@ -1040,17 +1164,6 @@ fn choose_font(state: &AppState) {
             &dialogs::os_error(&localized_string(IDS_CREATE_FONT_FAILED), &error),
         );
         return;
-    }
-    unsafe {
-        SendMessageW(editor, WM_SETFONT, font as usize, 1);
-        if state.hwnd.get().is_null() {
-            DeleteObject(font);
-            return;
-        }
-        let previous = state.owned_font.replace(font);
-        if !previous.is_null() {
-            DeleteObject(previous);
-        }
     }
     state.font_choice.set(choice);
 }
@@ -1612,5 +1725,64 @@ mod tests {
         assert!(whole_word_at(&after, 0, 3));
         assert_eq!(scalar_before(&before, 1), None);
         assert_eq!(scalar_after(&after, 3), None);
+    }
+
+    #[test]
+    fn default_zoom_is_100_percent() {
+        assert_eq!(zoom_percent(DEFAULT_ZOOM_INDEX), 100);
+    }
+
+    #[test]
+    fn zoom_steps_through_the_fixed_scale() {
+        assert_eq!(zoom_percent(stepped_zoom_index(DEFAULT_ZOOM_INDEX, 1)), 110);
+        assert_eq!(zoom_percent(stepped_zoom_index(DEFAULT_ZOOM_INDEX, -1)), 90);
+        assert_eq!(zoom_percent(stepped_zoom_index(DEFAULT_ZOOM_INDEX, 3)), 130);
+        assert_eq!(zoom_percent(stepped_zoom_index(DEFAULT_ZOOM_INDEX, -3)), 70);
+    }
+
+    #[test]
+    fn zoom_clamps_at_both_ends() {
+        assert_eq!(stepped_zoom_index(0, -1), 0);
+        assert_eq!(stepped_zoom_index(0, -99), 0);
+        assert_eq!(
+            stepped_zoom_index(ZOOM_LEVELS.len() - 1, 1),
+            ZOOM_LEVELS.len() - 1
+        );
+        assert_eq!(
+            stepped_zoom_index(ZOOM_LEVELS.len() - 1, 99),
+            ZOOM_LEVELS.len() - 1
+        );
+    }
+
+    #[test]
+    fn restore_default_zoom_returns_to_100_percent() {
+        let current = stepped_zoom_index(DEFAULT_ZOOM_INDEX, 11);
+        let restored = stepped_zoom_index(current, DEFAULT_ZOOM_INDEX as i32 - current as i32);
+        assert_eq!(zoom_percent(restored), 100);
+    }
+
+    #[test]
+    fn rendered_font_height_combines_logical_size_dpi_and_zoom() {
+        assert_eq!(rendered_font_height(100, 96, 100), -13);
+        assert_eq!(rendered_font_height(100, 96, 150), -20);
+        assert_eq!(rendered_font_height(100, 192, 150), -40);
+    }
+
+    #[test]
+    fn rendered_font_height_does_not_cumulate_scaling() {
+        let at_150_percent = rendered_font_height(100, 96, 150);
+        let after_dpi_change = rendered_font_height(100, 192, 150);
+        let reset_at_original_dpi = rendered_font_height(100, 96, 100);
+
+        assert_eq!(at_150_percent, -20);
+        assert_eq!(after_dpi_change, -40);
+        assert_eq!(reset_at_original_dpi, -13);
+    }
+
+    #[test]
+    fn unusual_logical_font_sizes_are_scaled_safely() {
+        assert_eq!(rendered_font_height(1, 96, 10), -1);
+        assert_eq!(rendered_font_height(55, 144, 500), -55);
+        assert_eq!(rendered_font_height(1234, 120, 250), -514);
     }
 }

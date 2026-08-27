@@ -36,6 +36,12 @@ BEGIN
     END
     POPUP "&Ansicht"
     BEGIN
+        POPUP "&Zoom"
+        BEGIN
+            MENUITEM "Vergrößern\tStrg++", ID_VIEW_ZOOM_IN
+            MENUITEM "Verkleinern\tStrg+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "Standardzoom &wiederherstellen\tStrg+0", ID_VIEW_ZOOM_DEFAULT
+        END
         MENUITEM "&Statusleiste", ID_VIEW_STATUS
     END
     POPUP "&Hilfe"

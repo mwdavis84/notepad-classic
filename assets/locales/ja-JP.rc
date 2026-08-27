@@ -36,6 +36,12 @@ BEGIN
     END
     POPUP "表示(&V)"
     BEGIN
+        POPUP "ズーム(&Z)"
+        BEGIN
+            MENUITEM "拡大(&I)\tCtrl++", ID_VIEW_ZOOM_IN
+            MENUITEM "縮小(&O)\tCtrl+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "既定のズームに戻す(&R)\tCtrl+0", ID_VIEW_ZOOM_DEFAULT
+        END
         MENUITEM "ステータス バー(&S)", ID_VIEW_STATUS
     END
     POPUP "ヘルプ(&H)"

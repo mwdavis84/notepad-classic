@@ -36,6 +36,12 @@ BEGIN
     END
     POPUP "E&xibir"
     BEGIN
+        POPUP "&Zoom"
+        BEGIN
+            MENUITEM "&Ampliar\tCtrl++", ID_VIEW_ZOOM_IN
+            MENUITEM "&Reduzir\tCtrl+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "&Restaurar zoom padrão\tCtrl+0", ID_VIEW_ZOOM_DEFAULT
+        END
         MENUITEM "&Barra de status", ID_VIEW_STATUS
     END
     POPUP "Aj&uda"

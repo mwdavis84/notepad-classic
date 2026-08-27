@@ -36,6 +36,12 @@ BEGIN
     END
     POPUP "देखें(&V)"
     BEGIN
+        POPUP "ज़ूम(&Z)"
+        BEGIN
+            MENUITEM "बड़ा करें(&I)\tCtrl++", ID_VIEW_ZOOM_IN
+            MENUITEM "छोटा करें(&O)\tCtrl+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "डिफ़ॉल्ट ज़ूम पुनर्स्थापित करें(&R)\tCtrl+0", ID_VIEW_ZOOM_DEFAULT
+        END
         MENUITEM "स्थिति पट्टी(&S)", ID_VIEW_STATUS
     END
     POPUP "मदद(&H)"

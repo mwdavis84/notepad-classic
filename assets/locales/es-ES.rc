@@ -36,6 +36,12 @@ BEGIN
     END
     POPUP "&Ver"
     BEGIN
+        POPUP "&Zoom"
+        BEGIN
+            MENUITEM "&Acercar\tCtrl++", ID_VIEW_ZOOM_IN
+            MENUITEM "Ale&jar\tCtrl+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "&Restaurar zoom predeterminado\tCtrl+0", ID_VIEW_ZOOM_DEFAULT
+        END
         MENUITEM "&Barra de estado", ID_VIEW_STATUS
     END
     POPUP "Ay&uda"
