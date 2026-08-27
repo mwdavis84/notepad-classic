@@ -1,0 +1,88 @@
+LANGUAGE 12, 1
+
+IDR_MAIN_MENU MENU
+BEGIN
+    POPUP "&Fichier"
+    BEGIN
+        MENUITEM "&Nouveau\tCtrl+N", ID_FILE_NEW
+        MENUITEM "&Ouvrir...\tCtrl+O", ID_FILE_OPEN
+        MENUITEM "&Enregistrer\tCtrl+S", ID_FILE_SAVE
+        MENUITEM "Enregistrer &sous...\tCtrl+Shift+S", ID_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM "&Quitter", ID_FILE_EXIT
+    END
+    POPUP "&Édition"
+    BEGIN
+        MENUITEM "&Annuler\tCtrl+Z", ID_EDIT_UNDO
+        MENUITEM SEPARATOR
+        MENUITEM "Cou&per\tCtrl+X", ID_EDIT_CUT
+        MENUITEM "&Copier\tCtrl+C", ID_EDIT_COPY
+        MENUITEM "C&oller\tCtrl+V", ID_EDIT_PASTE
+        MENUITEM "&Supprimer\tDel", ID_EDIT_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "&Rechercher...\tCtrl+F", ID_EDIT_FIND
+        MENUITEM "Rechercher le su&ivant\tF3", ID_EDIT_FIND_NEXT
+        MENUITEM "Rechercher le pr&écédent\tShift+F3", ID_EDIT_FIND_PREVIOUS
+        MENUITEM "Re&mplacer...\tCtrl+H", ID_EDIT_REPLACE
+        MENUITEM "A&tteindre...\tCtrl+G", ID_EDIT_GOTO
+        MENUITEM SEPARATOR
+        MENUITEM "Sélectionner to&ut\tCtrl+A", ID_EDIT_SELECT_ALL
+        MENUITEM "&Heure/Date\tF5", ID_EDIT_TIME_DATE
+    END
+    POPUP "F&ormat"
+    BEGIN
+        MENUITEM "&Retour automatique à la ligne", ID_FORMAT_WRAP
+        MENUITEM "&Police...", ID_FORMAT_FONT
+    END
+    POPUP "&Affichage"
+    BEGIN
+        MENUITEM "&Barre d'état", ID_VIEW_STATUS
+    END
+    POPUP "A&ide"
+    BEGIN
+        MENUITEM "À &propos de Notepad Classic", ID_HELP_ABOUT
+    END
+END
+
+STRINGTABLE
+BEGIN
+    IDS_APP_NAME "Notepad Classic"
+    IDS_UNTITLED "Sans titre"
+    IDS_WINDOW_TITLE "%1 - Notepad Classic"
+    IDS_SAVE_CHANGES "Voulez-vous enregistrer les modifications apportées à %1 ?"
+    IDS_CREATE_MISSING_FILE "Impossible de trouver le fichier %1.\n\nVoulez-vous créer un nouveau fichier ?"
+    IDS_COMMAND_LINE_NOT_FILE "Le chemin de la ligne de commande n'est pas un fichier :\n\n%1"
+    IDS_OPEN_FILE_FAILED "Impossible d'ouvrir le fichier :\n\n%1"
+    IDS_SAVE_FILE_FAILED "Impossible d'enregistrer le fichier :\n\n%1"
+    IDS_STATUS_POSITION "Ln %1, Col %2"
+    IDS_GOTO_TITLE "Atteindre la ligne"
+    IDS_GOTO_LABEL "&Numéro de ligne :"
+    IDS_GOTO_RANGE "Le numéro de ligne doit être compris entre 1 et %1."
+    IDS_FIND_NOT_FOUND "Impossible de trouver ""%1"""
+    IDS_REPLACE_COUNT "Occurrences remplacées : %1"
+    IDS_ABOUT_TITLE "À propos de Notepad Classic"
+    IDS_ABOUT_VERSION "Notepad Classic\nVersion %1"
+    IDS_ABOUT_PUBLISHER "Éditeur : DeekFit\nPublié sous licence MIT."
+    IDS_ABOUT_REPOSITORY "Dépôt GitHub"
+    IDS_ABOUT_LICENSE "Licence MIT"
+    IDS_ABOUT_THREADS "Suivre @deekfit_apps sur Threads"
+    IDS_CLOSE "Fermer"
+    IDS_OPEN_LINK_FAILED "Impossible d'ouvrir le lien."
+    IDS_OK "OK"
+    IDS_CANCEL "Annuler"
+    IDS_FIND_DIALOG_FAILED "Impossible d'ouvrir la boîte de dialogue Rechercher."
+    IDS_GET_MODULE_FAILED "Impossible d'obtenir le module de l'application"
+    IDS_REGISTER_FIND_FAILED "Impossible d'enregistrer le message de recherche"
+    IDS_LOAD_ICON_FAILED "Impossible de charger l'icône de l'application"
+    IDS_REGISTER_CLASS_FAILED "Impossible d'enregistrer la classe de fenêtre"
+    IDS_CREATE_WINDOW_FAILED "Impossible de créer la fenêtre principale"
+    IDS_MESSAGE_LOOP_FAILED "La boucle de messages a échoué"
+    IDS_CREATE_STATUS_FAILED "Impossible de créer la barre d'état"
+    IDS_CREATE_EDITOR_FAILED "Impossible de créer l'éditeur"
+    IDS_LOAD_MENU_FAILED "Impossible de charger le menu localisé"
+    IDS_CREATE_ACCELERATORS_FAILED "Impossible de créer les accélérateurs de clavier"
+    IDS_CREATE_FONT_FAILED "Impossible de créer la police"
+    IDS_FILE_DIALOG_FAILED "La boîte de dialogue de fichier a échoué (erreur %1)."
+    IDS_FILTER_TEXT_DOCUMENTS "Documents texte"
+    IDS_FILTER_ALL_FILES "Tous les fichiers"
+END

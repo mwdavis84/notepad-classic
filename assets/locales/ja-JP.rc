@@ -1,0 +1,88 @@
+LANGUAGE 17, 1
+
+IDR_MAIN_MENU MENU
+BEGIN
+    POPUP "ファイル(&F)"
+    BEGIN
+        MENUITEM "新規(&N)\tCtrl+N", ID_FILE_NEW
+        MENUITEM "開く(&O)...\tCtrl+O", ID_FILE_OPEN
+        MENUITEM "上書き保存(&S)\tCtrl+S", ID_FILE_SAVE
+        MENUITEM "名前を付けて保存(&A)...\tCtrl+Shift+S", ID_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM "終了(&X)", ID_FILE_EXIT
+    END
+    POPUP "編集(&E)"
+    BEGIN
+        MENUITEM "元に戻す(&U)\tCtrl+Z", ID_EDIT_UNDO
+        MENUITEM SEPARATOR
+        MENUITEM "切り取り(&T)\tCtrl+X", ID_EDIT_CUT
+        MENUITEM "コピー(&C)\tCtrl+C", ID_EDIT_COPY
+        MENUITEM "貼り付け(&P)\tCtrl+V", ID_EDIT_PASTE
+        MENUITEM "削除(&L)\tDel", ID_EDIT_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "検索(&F)...\tCtrl+F", ID_EDIT_FIND
+        MENUITEM "次を検索(&N)\tF3", ID_EDIT_FIND_NEXT
+        MENUITEM "前を検索(&V)\tShift+F3", ID_EDIT_FIND_PREVIOUS
+        MENUITEM "置換(&R)...\tCtrl+H", ID_EDIT_REPLACE
+        MENUITEM "行へ移動(&G)...\tCtrl+G", ID_EDIT_GOTO
+        MENUITEM SEPARATOR
+        MENUITEM "すべて選択(&A)\tCtrl+A", ID_EDIT_SELECT_ALL
+        MENUITEM "日付と時刻(&D)\tF5", ID_EDIT_TIME_DATE
+    END
+    POPUP "書式(&O)"
+    BEGIN
+        MENUITEM "右端で折り返す(&W)", ID_FORMAT_WRAP
+        MENUITEM "フォント(&F)...", ID_FORMAT_FONT
+    END
+    POPUP "表示(&V)"
+    BEGIN
+        MENUITEM "ステータス バー(&S)", ID_VIEW_STATUS
+    END
+    POPUP "ヘルプ(&H)"
+    BEGIN
+        MENUITEM "Notepad Classic のバージョン情報(&A)", ID_HELP_ABOUT
+    END
+END
+
+STRINGTABLE
+BEGIN
+    IDS_APP_NAME "Notepad Classic"
+    IDS_UNTITLED "無題"
+    IDS_WINDOW_TITLE "%1 - Notepad Classic"
+    IDS_SAVE_CHANGES "%1 への変更内容を保存しますか?"
+    IDS_CREATE_MISSING_FILE "ファイル %1 が見つかりません。\n\n新しく作成しますか?"
+    IDS_COMMAND_LINE_NOT_FILE "コマンド ライン パスがファイルではありません:\n\n%1"
+    IDS_OPEN_FILE_FAILED "ファイルを開けませんでした:\n\n%1"
+    IDS_SAVE_FILE_FAILED "ファイルを保存できませんでした:\n\n%1"
+    IDS_STATUS_POSITION "%1 行、%2 列"
+    IDS_GOTO_TITLE "行へ移動"
+    IDS_GOTO_LABEL "行番号(&L):"
+    IDS_GOTO_RANGE "行番号は 1 から %1 までの間である必要があります。"
+    IDS_FIND_NOT_FOUND """%1"" が見つかりません"
+    IDS_REPLACE_COUNT "置換された件数: %1"
+    IDS_ABOUT_TITLE "Notepad Classic のバージョン情報"
+    IDS_ABOUT_VERSION "Notepad Classic\nバージョン %1"
+    IDS_ABOUT_PUBLISHER "発行元: DeekFit\nMIT License の下で公開されています。"
+    IDS_ABOUT_REPOSITORY "GitHub リポジトリ"
+    IDS_ABOUT_LICENSE "MIT License"
+    IDS_ABOUT_THREADS "Threads で @deekfit_apps をフォロー"
+    IDS_CLOSE "閉じる"
+    IDS_OPEN_LINK_FAILED "リンクを開くことができません。"
+    IDS_OK "OK"
+    IDS_CANCEL "キャンセル"
+    IDS_FIND_DIALOG_FAILED "検索ダイアログを開くことができません。"
+    IDS_GET_MODULE_FAILED "アプリケーション モジュールを取得できません"
+    IDS_REGISTER_FIND_FAILED "検索メッセージを登録できません"
+    IDS_LOAD_ICON_FAILED "アプリケーション アイコンを読み込めません"
+    IDS_REGISTER_CLASS_FAILED "ウィンドウ クラスを登録できません"
+    IDS_CREATE_WINDOW_FAILED "メイン ウィンドウを作成できません"
+    IDS_MESSAGE_LOOP_FAILED "メッセージ ループが失敗しました"
+    IDS_CREATE_STATUS_FAILED "ステータス バーを作成できません"
+    IDS_CREATE_EDITOR_FAILED "エディターを作成できません"
+    IDS_LOAD_MENU_FAILED "ローカライズされたメニューを読み込めません"
+    IDS_CREATE_ACCELERATORS_FAILED "アクセラレータ テーブルを作成できません"
+    IDS_CREATE_FONT_FAILED "フォントを作成できません"
+    IDS_FILE_DIALOG_FAILED "ファイル ダイアログでエラーが発生しました (エラー %1)。"
+    IDS_FILTER_TEXT_DOCUMENTS "テキスト文書"
+    IDS_FILTER_ALL_FILES "すべてのファイル"
+END
