@@ -34,6 +34,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_EX_CONTROLPARENT, WS_EX_DLGMODALFRAME, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
+use crate::localization::ids::*;
+use crate::localization::{self, FormatArg};
+
 const FILE_BUFFER_LEN: usize = 32_768;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SaveDecision {
@@ -52,14 +55,13 @@ pub fn save_file(owner: HWND, current: Option<&Path>) -> Result<Option<PathBuf>,
 
 fn file_dialog(owner: HWND, current: Option<&Path>, save: bool) -> Result<Option<PathBuf>, String> {
     let mut buffer = vec![0u16; FILE_BUFFER_LEN];
-    let filter = to_wide("Text Documents (*.txt)\0*.txt\0All Files (*.*)\0*.*\0");
+    let filter = file_filter();
     if let Some(path) = current {
         let wide = to_wide_os(path.as_os_str());
         let count = wide.len().min(buffer.len() - 1);
         buffer[..count].copy_from_slice(&wide[..count]);
     }
     let default_extension = to_wide("txt");
-    let title = to_wide(if save { "Save As" } else { "Open" });
     let mut dialog: OPENFILENAMEW = unsafe { zeroed() };
     dialog.lStructSize = size_of::<OPENFILENAMEW>() as u32;
     dialog.hwndOwner = owner;
@@ -67,7 +69,6 @@ fn file_dialog(owner: HWND, current: Option<&Path>, save: bool) -> Result<Option
     dialog.nFilterIndex = 1;
     dialog.lpstrFile = buffer.as_mut_ptr();
     dialog.nMaxFile = buffer.len() as u32;
-    dialog.lpstrTitle = title.as_ptr();
     dialog.lpstrDefExt = default_extension.as_ptr();
     dialog.Flags = OFN_EXPLORER
         | OFN_HIDEREADONLY
@@ -99,8 +100,28 @@ fn file_dialog(owner: HWND, current: Option<&Path>, save: bool) -> Result<Option
     if error == 0 {
         Ok(None)
     } else {
-        Err(format!("The file dialog failed (error 0x{error:08X})."))
+        let detail = format!("0x{error:08X}").encode_utf16().collect::<Vec<_>>();
+        Err(localized_format(
+            IDS_FILE_DIALOG_FAILED,
+            &[FormatArg::Wide(&detail)],
+        ))
     }
+}
+
+fn file_filter() -> Vec<u16> {
+    let text_documents = localization::text(IDS_FILTER_TEXT_DOCUMENTS);
+    let all_files = localization::text(IDS_FILTER_ALL_FILES);
+    let mut filter = localization::without_trailing_nul(&text_documents).to_vec();
+    filter.extend(" (*.txt)".encode_utf16());
+    filter.push(0);
+    filter.extend("*.txt".encode_utf16());
+    filter.push(0);
+    filter.extend_from_slice(localization::without_trailing_nul(&all_files));
+    filter.extend(" (*.*)".encode_utf16());
+    filter.push(0);
+    filter.extend("*.*".encode_utf16());
+    filter.extend([0, 0]);
+    filter
 }
 
 pub fn choose_font(owner: HWND, current: &mut LOGFONTW) -> Option<i32> {
@@ -118,8 +139,8 @@ pub fn choose_font(owner: HWND, current: &mut LOGFONTW) -> Option<i32> {
 }
 
 pub fn confirm_save(owner: HWND, display_name: &OsStr) -> SaveDecision {
-    let text = wide_with_os("Do you want to save changes to ", display_name, "?");
-    let title = to_wide("Notepad Classic");
+    let text = localization::format(IDS_SAVE_CHANGES, &[FormatArg::Os(display_name)]);
+    let title = localization::text(IDS_APP_NAME);
     let answer = unsafe {
         MessageBoxW(
             owner,
@@ -137,12 +158,8 @@ pub fn confirm_save(owner: HWND, display_name: &OsStr) -> SaveDecision {
 }
 
 pub fn confirm_create(owner: HWND, path: &Path) -> bool {
-    let text = wide_with_os(
-        "Cannot find the ",
-        path.as_os_str(),
-        " file.\n\nDo you want to create a new file?",
-    );
-    let title = to_wide("Notepad Classic");
+    let text = localization::format(IDS_CREATE_MISSING_FILE, &[FormatArg::Os(path.as_os_str())]);
+    let title = localization::text(IDS_APP_NAME);
     unsafe {
         MessageBoxW(
             owner,
@@ -166,9 +183,9 @@ pub fn show_error(owner: Option<HWND>, title: &str, message: &str) {
     }
 }
 
-pub fn show_error_with_path(owner: Option<HWND>, title: &str, prefix: &str, path: &Path) {
+pub fn show_error_with_path(owner: Option<HWND>, title: &str, template_id: usize, path: &Path) {
     let title = to_wide(title);
-    let message = wide_with_os(prefix, path.as_os_str(), "");
+    let message = localization::format(template_id, &[FormatArg::Os(path.as_os_str())]);
     unsafe {
         MessageBoxW(
             owner.unwrap_or(null_mut()),
@@ -192,17 +209,27 @@ pub fn to_wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
 }
 
-fn to_wide_os(text: &OsStr) -> Vec<u16> {
-    text.encode_wide().chain(Some(0)).collect()
+fn localized_string(id: usize) -> String {
+    let text = localization::text(id);
+    String::from_utf16_lossy(localization::without_trailing_nul(&text))
 }
 
-fn wide_with_os(prefix: &str, value: &OsStr, suffix: &str) -> Vec<u16> {
-    prefix
-        .encode_utf16()
-        .chain(value.encode_wide())
-        .chain(suffix.encode_utf16())
-        .chain(Some(0))
-        .collect()
+fn localized_format(id: usize, args: &[FormatArg<'_>]) -> String {
+    let text = localization::format(id, args);
+    String::from_utf16_lossy(localization::without_trailing_nul(&text))
+}
+
+fn sys_link(url: &str, label_id: usize) -> String {
+    let label = localized_string(label_id)
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
+    format!("<a href=\"{url}\">{label}</a>")
+}
+
+fn to_wide_os(text: &OsStr) -> Vec<u16> {
+    text.encode_wide().chain(Some(0)).collect()
 }
 
 struct GotoState {
@@ -246,11 +273,11 @@ pub fn go_to_line(owner: HWND, instance: HINSTANCE, initial: u32) -> Option<u32>
     });
     let mut owner_rect: RECT = unsafe { zeroed() };
     unsafe { GetWindowRect(owner, &mut owner_rect) };
-    let width = scale_for_dpi(300, dpi);
+    let width = scale_for_dpi(320, dpi);
     let height = scale_for_dpi(145, dpi);
     let x = owner_rect.left + ((owner_rect.right - owner_rect.left - width) / 2).max(0);
     let y = owner_rect.top + ((owner_rect.bottom - owner_rect.top - height) / 2).max(0);
-    let title = to_wide("Go To Line");
+    let title = localization::text(IDS_GOTO_TITLE);
     // End the temporary mutable borrow before `CreateWindowExW` can reenter the
     // dialog procedure with this raw pointer.
     let state_pointer = (&mut *state) as *mut GotoState;
@@ -333,7 +360,7 @@ unsafe extern "system" fn goto_window_proc(
             let label = create_child(
                 hwnd,
                 "STATIC",
-                "&Line number:",
+                &localized_string(IDS_GOTO_LABEL),
                 WS_VISIBLE,
                 12,
                 12,
@@ -352,12 +379,12 @@ unsafe extern "system" fn goto_window_proc(
                 34,
                 260,
                 24,
-                100,
+                IDC_GOTO_EDIT,
             ));
             let ok = create_child(
                 hwnd,
                 "BUTTON",
-                "OK",
+                &localized_string(IDS_OK),
                 WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON as u32,
                 116,
                 70,
@@ -369,7 +396,7 @@ unsafe extern "system" fn goto_window_proc(
             let cancel = create_child(
                 hwnd,
                 "BUTTON",
-                "Cancel",
+                &localized_string(IDS_CANCEL),
                 WS_VISIBLE | WS_TABSTOP,
                 197,
                 70,
@@ -456,10 +483,10 @@ fn scale_for_dpi(value: i32, dpi: u32) -> i32 {
 fn layout_goto(state: &GotoState) {
     let dpi = state.dpi.get();
     let controls = [
-        (state.label.get(), 12, 12, 260, 20),
-        (state.edit.get(), 12, 34, 260, 24),
-        (state.ok.get(), 116, 70, 75, 26),
-        (state.cancel.get(), 197, 70, 75, 26),
+        (state.label.get(), 12, 12, 296, 20),
+        (state.edit.get(), 12, 34, 296, 24),
+        (state.ok.get(), 106, 70, 90, 26),
+        (state.cancel.get(), 206, 70, 90, 26),
     ];
     for (control, x, y, width, height) in controls {
         if !control.is_null() {
@@ -533,9 +560,9 @@ fn replace_goto_font(state: &GotoState) {
 }
 
 const SS_ICON: u32 = 0x0000_0003;
-const APP_ICON_RESOURCE_ID: usize = 1;
-const ID_ABOUT_APP_NAME: usize = 1001;
-const ID_ABOUT_PUBLISHER: usize = 1002;
+const REPOSITORY_URL: &str = "https://github.com/mwdavis84/notepad-classic";
+const LICENSE_URL: &str = "https://github.com/mwdavis84/notepad-classic/blob/main/LICENSE";
+const THREADS_URL: &str = "https://threads.com/@deekfit_apps";
 
 struct AboutState {
     hwnd: Cell<HWND>,
@@ -579,11 +606,11 @@ pub fn show_about(owner: HWND, instance: HINSTANCE) {
 
     let mut owner_rect: RECT = unsafe { zeroed() };
     unsafe { GetWindowRect(owner, &mut owner_rect) };
-    let width = scale_for_dpi(380, dpi);
-    let height = scale_for_dpi(260, dpi);
+    let width = scale_for_dpi(420, dpi);
+    let height = scale_for_dpi(280, dpi);
     let x = owner_rect.left + ((owner_rect.right - owner_rect.left - width) / 2).max(0);
     let y = owner_rect.top + ((owner_rect.bottom - owner_rect.top - height) / 2).max(0);
-    let title = to_wide("About Notepad Classic");
+    let title = localization::text(IDS_ABOUT_TITLE);
     let state_pointer = (&mut *state) as *mut AboutState;
 
     let hwnd = unsafe {
@@ -673,7 +700,8 @@ unsafe extern "system" fn about_window_proc(
                 create_child(hwnd, "STATIC", "", WS_VISIBLE | SS_ICON, 0, 0, 0, 0, 0);
             state.icon_control.set(icon_control);
 
-            let app_version = format!("Notepad Classic\nVersion {}", env!("CARGO_PKG_VERSION"));
+            let version = env!("CARGO_PKG_VERSION").encode_utf16().collect::<Vec<_>>();
+            let app_version = localized_format(IDS_ABOUT_VERSION, &[FormatArg::Wide(&version)]);
             let app_name_control = create_child(
                 hwnd,
                 "STATIC",
@@ -683,25 +711,25 @@ unsafe extern "system" fn about_window_proc(
                 0,
                 0,
                 0,
-                ID_ABOUT_APP_NAME,
+                IDC_ABOUT_APP_NAME,
             );
 
             let publisher_control = create_child(
                 hwnd,
                 "STATIC",
-                "Publisher: DeekFit\nReleased under the MIT License.",
+                &localized_string(IDS_ABOUT_PUBLISHER),
                 WS_VISIBLE,
                 0,
                 0,
                 0,
                 0,
-                ID_ABOUT_PUBLISHER,
+                IDC_ABOUT_PUBLISHER,
             );
 
             let link1 = create_child(
                 hwnd,
                 "SysLink",
-                "<a href=\"https://github.com/mwdavis84/notepad-classic\">GitHub Repository</a>",
+                &sys_link(REPOSITORY_URL, IDS_ABOUT_REPOSITORY),
                 WS_VISIBLE | WS_TABSTOP,
                 0,
                 0,
@@ -712,7 +740,7 @@ unsafe extern "system" fn about_window_proc(
             let link2 = create_child(
                 hwnd,
                 "SysLink",
-                "<a href=\"https://github.com/mwdavis84/notepad-classic/blob/main/LICENSE\">MIT License</a>",
+                &sys_link(LICENSE_URL, IDS_ABOUT_LICENSE),
                 WS_VISIBLE | WS_TABSTOP,
                 0,
                 0,
@@ -723,7 +751,7 @@ unsafe extern "system" fn about_window_proc(
             let link3 = create_child(
                 hwnd,
                 "SysLink",
-                "<a href=\"https://threads.com/@deekfit_apps\">Follow @deekfit_apps on Threads</a>",
+                &sys_link(THREADS_URL, IDS_ABOUT_THREADS),
                 WS_VISIBLE | WS_TABSTOP,
                 0,
                 0,
@@ -738,7 +766,7 @@ unsafe extern "system" fn about_window_proc(
             let close_button = create_child(
                 hwnd,
                 "BUTTON",
-                "Close",
+                &localized_string(IDS_CLOSE),
                 WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON as u32,
                 0,
                 0,
@@ -780,7 +808,11 @@ unsafe extern "system" fn about_window_proc(
                     )
                 };
                 if (result as isize) <= 32 {
-                    show_error(Some(hwnd), "Notepad Classic", "Unable to open the link.");
+                    show_error(
+                        Some(hwnd),
+                        &localized_string(IDS_APP_NAME),
+                        &localized_string(IDS_OPEN_LINK_FAILED),
+                    );
                 }
                 0
             } else {
@@ -845,8 +877,8 @@ unsafe extern "system" fn about_window_proc(
 
 fn layout_about(state: &AboutState, dpi: u32) {
     let hwnd = state.hwnd.get();
-    let app_name = unsafe { GetDlgItem(hwnd, ID_ABOUT_APP_NAME as i32) };
-    let publisher = unsafe { GetDlgItem(hwnd, ID_ABOUT_PUBLISHER as i32) };
+    let app_name = unsafe { GetDlgItem(hwnd, IDC_ABOUT_APP_NAME as i32) };
+    let publisher = unsafe { GetDlgItem(hwnd, IDC_ABOUT_PUBLISHER as i32) };
     let icon_size = scale_for_dpi(32, dpi);
 
     let controls = [
@@ -861,42 +893,42 @@ fn layout_about(state: &AboutState, dpi: u32) {
             app_name,
             scale_for_dpi(68, dpi),
             scale_for_dpi(16, dpi),
-            scale_for_dpi(280, dpi),
+            scale_for_dpi(320, dpi),
             scale_for_dpi(34, dpi),
         ),
         (
             publisher,
             scale_for_dpi(68, dpi),
             scale_for_dpi(56, dpi),
-            scale_for_dpi(280, dpi),
-            scale_for_dpi(34, dpi),
+            scale_for_dpi(320, dpi),
+            scale_for_dpi(48, dpi),
         ),
         (
             state.link_controls[0].get(),
             scale_for_dpi(68, dpi),
-            scale_for_dpi(96, dpi),
-            scale_for_dpi(280, dpi),
+            scale_for_dpi(112, dpi),
+            scale_for_dpi(320, dpi),
             scale_for_dpi(18, dpi),
         ),
         (
             state.link_controls[1].get(),
             scale_for_dpi(68, dpi),
-            scale_for_dpi(118, dpi),
-            scale_for_dpi(280, dpi),
+            scale_for_dpi(134, dpi),
+            scale_for_dpi(320, dpi),
             scale_for_dpi(18, dpi),
         ),
         (
             state.link_controls[2].get(),
             scale_for_dpi(68, dpi),
-            scale_for_dpi(140, dpi),
-            scale_for_dpi(280, dpi),
+            scale_for_dpi(156, dpi),
+            scale_for_dpi(320, dpi),
             scale_for_dpi(18, dpi),
         ),
         (
             state.close_button.get(),
-            scale_for_dpi(275, dpi),
-            scale_for_dpi(172, dpi),
-            scale_for_dpi(75, dpi),
+            scale_for_dpi(305, dpi),
+            scale_for_dpi(194, dpi),
+            scale_for_dpi(95, dpi),
             scale_for_dpi(26, dpi),
         ),
     ];
@@ -943,7 +975,7 @@ fn replace_about_icon(state: &AboutState, instance: HINSTANCE, dpi: u32) {
     let icon = unsafe {
         LoadImageW(
             instance,
-            APP_ICON_RESOURCE_ID as *const u16,
+            IDI_APP_ICON as *const u16,
             IMAGE_ICON,
             size,
             size,
@@ -1018,6 +1050,14 @@ mod tests {
     }
 
     #[test]
+    fn file_filters_localize_labels_but_preserve_file_patterns() {
+        assert_eq!(
+            file_filter(),
+            to_wide("Text Documents (*.txt)\0*.txt\0All Files (*.*)\0*.*\0")
+        );
+    }
+
+    #[test]
     fn scale_for_dpi_scales_proportionally() {
         // 96 DPI (100% scale)
         assert_eq!(scale_for_dpi(380, 96), 380);
@@ -1041,24 +1081,25 @@ mod tests {
     }
 
     #[test]
-    fn about_dialog_hyperlinks_are_valid_syslink_markup() {
+    fn about_dialog_hyperlinks_keep_fixed_targets() {
         let links = [
-            "<a href=\"https://github.com/mwdavis84/notepad-classic\">GitHub Repository</a>",
-            "<a href=\"https://github.com/mwdavis84/notepad-classic/blob/main/LICENSE\">MIT License</a>",
-            "<a href=\"https://threads.com/@deekfit_apps\">Follow @deekfit_apps on Threads</a>",
+            (REPOSITORY_URL, IDS_ABOUT_REPOSITORY),
+            (LICENSE_URL, IDS_ABOUT_LICENSE),
+            (THREADS_URL, IDS_ABOUT_THREADS),
         ];
 
-        for link in links {
+        for (url, label) in links {
+            let link = sys_link(url, label);
             assert!(link.starts_with("<a href=\"https://"));
             assert!(link.ends_with("</a>"));
-            assert!(link.contains("\">"));
+            assert!(link.contains(url));
         }
     }
 
     #[test]
     fn about_dialog_app_version_string_matches_package() {
-        let app_version = format!("Notepad Classic\nVersion {}", env!("CARGO_PKG_VERSION"));
-        assert!(app_version.starts_with("Notepad Classic\nVersion "));
-        assert!(!env!("CARGO_PKG_VERSION").is_empty());
+        let version = env!("CARGO_PKG_VERSION").encode_utf16().collect::<Vec<_>>();
+        let app_version = localized_format(IDS_ABOUT_VERSION, &[FormatArg::Wide(&version)]);
+        assert!(app_version.contains(env!("CARGO_PKG_VERSION")));
     }
 }

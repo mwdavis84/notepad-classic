@@ -1,0 +1,88 @@
+LANGUAGE 9, 1
+
+IDR_MAIN_MENU MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&New\tCtrl+N", ID_FILE_NEW
+        MENUITEM "&Open...\tCtrl+O", ID_FILE_OPEN
+        MENUITEM "&Save\tCtrl+S", ID_FILE_SAVE
+        MENUITEM "Save &As...\tCtrl+Shift+S", ID_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit", ID_FILE_EXIT
+    END
+    POPUP "&Edit"
+    BEGIN
+        MENUITEM "&Undo\tCtrl+Z", ID_EDIT_UNDO
+        MENUITEM SEPARATOR
+        MENUITEM "Cu&t\tCtrl+X", ID_EDIT_CUT
+        MENUITEM "&Copy\tCtrl+C", ID_EDIT_COPY
+        MENUITEM "&Paste\tCtrl+V", ID_EDIT_PASTE
+        MENUITEM "De&lete\tDel", ID_EDIT_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "&Find...\tCtrl+F", ID_EDIT_FIND
+        MENUITEM "Find &Next\tF3", ID_EDIT_FIND_NEXT
+        MENUITEM "Find Pre&vious\tShift+F3", ID_EDIT_FIND_PREVIOUS
+        MENUITEM "&Replace...\tCtrl+H", ID_EDIT_REPLACE
+        MENUITEM "&Go To...\tCtrl+G", ID_EDIT_GOTO
+        MENUITEM SEPARATOR
+        MENUITEM "Select &All\tCtrl+A", ID_EDIT_SELECT_ALL
+        MENUITEM "Time/&Date\tF5", ID_EDIT_TIME_DATE
+    END
+    POPUP "F&ormat"
+    BEGIN
+        MENUITEM "&Word Wrap", ID_FORMAT_WRAP
+        MENUITEM "&Font...", ID_FORMAT_FONT
+    END
+    POPUP "&View"
+    BEGIN
+        MENUITEM "&Status Bar", ID_VIEW_STATUS
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About Notepad Classic", ID_HELP_ABOUT
+    END
+END
+
+STRINGTABLE
+BEGIN
+    IDS_APP_NAME "Notepad Classic"
+    IDS_UNTITLED "Untitled"
+    IDS_WINDOW_TITLE "%1 - Notepad Classic"
+    IDS_SAVE_CHANGES "Do you want to save changes to %1?"
+    IDS_CREATE_MISSING_FILE "Cannot find the %1 file.\n\nDo you want to create a new file?"
+    IDS_COMMAND_LINE_NOT_FILE "The command-line path is not a file:\n\n%1"
+    IDS_OPEN_FILE_FAILED "Could not open the file:\n\n%1"
+    IDS_SAVE_FILE_FAILED "Could not save the file:\n\n%1"
+    IDS_STATUS_POSITION "Ln %1, Col %2"
+    IDS_GOTO_TITLE "Go To Line"
+    IDS_GOTO_LABEL "&Line number:"
+    IDS_GOTO_RANGE "The line number must be between 1 and %1."
+    IDS_FIND_NOT_FOUND "Cannot find ""%1"""
+    IDS_REPLACE_COUNT "Occurrences replaced: %1"
+    IDS_ABOUT_TITLE "About Notepad Classic"
+    IDS_ABOUT_VERSION "Notepad Classic\nVersion %1"
+    IDS_ABOUT_PUBLISHER "Publisher: DeekFit\nReleased under the MIT License."
+    IDS_ABOUT_REPOSITORY "GitHub Repository"
+    IDS_ABOUT_LICENSE "MIT License"
+    IDS_ABOUT_THREADS "Follow @deekfit_apps on Threads"
+    IDS_CLOSE "Close"
+    IDS_OPEN_LINK_FAILED "Unable to open the link."
+    IDS_OK "OK"
+    IDS_CANCEL "Cancel"
+    IDS_FIND_DIALOG_FAILED "Unable to open the Find dialog."
+    IDS_GET_MODULE_FAILED "Unable to get the application module"
+    IDS_REGISTER_FIND_FAILED "Unable to register the Find message"
+    IDS_LOAD_ICON_FAILED "Unable to load the application icon"
+    IDS_REGISTER_CLASS_FAILED "Unable to register the window class"
+    IDS_CREATE_WINDOW_FAILED "Unable to create the main window"
+    IDS_MESSAGE_LOOP_FAILED "The message loop failed"
+    IDS_CREATE_STATUS_FAILED "Unable to create the status bar"
+    IDS_CREATE_EDITOR_FAILED "Unable to create the editor"
+    IDS_LOAD_MENU_FAILED "Unable to load the localized menu"
+    IDS_CREATE_ACCELERATORS_FAILED "Unable to create keyboard accelerators"
+    IDS_CREATE_FONT_FAILED "Unable to create the font"
+    IDS_FILE_DIALOG_FAILED "The file dialog failed (error %1)."
+    IDS_FILTER_TEXT_DOCUMENTS "Text Documents"
+    IDS_FILTER_ALL_FILES "All Files"
+END

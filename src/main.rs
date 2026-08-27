@@ -5,11 +5,17 @@ mod app;
 #[cfg(windows)]
 mod dialogs;
 mod file;
+#[cfg(windows)]
+mod localization;
+#[cfg(test)]
+mod resource_catalog;
 
 #[cfg(windows)]
 fn main() {
     if let Err(message) = app::run() {
-        dialogs::show_error(None, "Notepad Classic", &message);
+        let title = localization::text(localization::ids::IDS_APP_NAME);
+        let title = String::from_utf16_lossy(localization::without_trailing_nul(&title));
+        dialogs::show_error(None, &title, &message);
     }
 }
 
