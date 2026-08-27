@@ -18,7 +18,7 @@ use windows_sys::Win32::Graphics::Gdi::{
     VERTRES,
 };
 use windows_sys::Win32::UI::Controls::Dialogs::{
-    CommDlgExtendedError, PD_NOPAGENUMS, PD_NOSELECTION, PD_RETURNDC,
+    CommDlgExtendedError, PD_HIDEPRINTTOFILE, PD_NOPAGENUMS, PD_NOSELECTION, PD_RETURNDC,
     PD_USEDEVMODECOPIESANDCOLLATE, PRINTDLGW, PrintDlgW,
 };
 
@@ -139,24 +139,24 @@ pub fn expand_tabs(line: &[u16]) -> Vec<u16> {
     result
 }
 
-pub fn wrap_line<F>(line: &[u16], max_width: i32, measure_width: &F) -> Vec<Vec<u16>>
+pub fn wrap_line<F>(line: &[u16], max_width: i32, measure_width: &F) -> Option<Vec<Vec<u16>>>
 where
-    F: Fn(&[u16]) -> i32,
+    F: Fn(&[u16]) -> Option<i32>,
 {
     if line.is_empty() {
-        return vec![Vec::new()];
+        return Some(vec![Vec::new()]);
     }
 
     let mut wrapped_lines = Vec::new();
     let mut remaining = line;
 
     while !remaining.is_empty() {
-        if measure_width(remaining) <= max_width {
+        if measure_width(remaining)? <= max_width {
             wrapped_lines.push(remaining.to_vec());
             break;
         }
 
-        let fit_count = find_fitting_prefix_len(remaining, max_width, measure_width);
+        let fit_count = find_fitting_prefix_len(remaining, max_width, measure_width)?;
 
         if fit_count >= remaining.len() {
             wrapped_lines.push(remaining.to_vec());
@@ -209,12 +209,12 @@ where
         wrapped_lines.push(Vec::new());
     }
 
-    wrapped_lines
+    Some(wrapped_lines)
 }
 
-fn find_fitting_prefix_len<F>(text: &[u16], max_width: i32, measure_width: &F) -> usize
+fn find_fitting_prefix_len<F>(text: &[u16], max_width: i32, measure_width: &F) -> Option<usize>
 where
-    F: Fn(&[u16]) -> i32,
+    F: Fn(&[u16]) -> Option<i32>,
 {
     let mut low = 1;
     let mut high = text.len();
@@ -231,7 +231,8 @@ where
             mid
         };
 
-        if measure_width(&text[..measure_len]) <= max_width {
+        let width = measure_width(&text[..measure_len])?;
+        if width <= max_width {
             best = measure_len;
             low = measure_len + 1;
         } else {
@@ -242,7 +243,7 @@ where
         }
     }
 
-    best
+    Some(best)
 }
 
 fn find_whitespace_break(text: &[u16], fit_count: usize) -> Option<usize> {
@@ -268,23 +269,23 @@ pub fn paginate<F>(
     max_width: i32,
     lines_per_page: usize,
     measure_width: F,
-) -> Vec<PrintedPage>
+) -> Option<Vec<PrintedPage>>
 where
-    F: Fn(&[u16]) -> i32,
+    F: Fn(&[u16]) -> Option<i32>,
 {
     let logical_lines = split_logical_lines(text);
     let mut visual_lines = Vec::new();
 
     for line in logical_lines {
         let expanded = expand_tabs(line);
-        let wrapped = wrap_line(&expanded, max_width, &measure_width);
+        let wrapped = wrap_line(&expanded, max_width, &measure_width)?;
         visual_lines.extend(wrapped);
     }
 
     if visual_lines.is_empty() {
-        return vec![PrintedPage {
+        return Some(vec![PrintedPage {
             lines: vec![Vec::new()],
-        }];
+        }]);
     }
 
     let lines_per_page = lines_per_page.max(1);
@@ -302,7 +303,7 @@ where
         });
     }
 
-    pages
+    Some(pages)
 }
 
 pub fn print(
@@ -314,7 +315,11 @@ pub fn print(
     let mut pd: PRINTDLGW = unsafe { zeroed() };
     pd.lStructSize = size_of::<PRINTDLGW>() as u32;
     pd.hwndOwner = owner;
-    pd.Flags = PD_RETURNDC | PD_NOPAGENUMS | PD_NOSELECTION | PD_USEDEVMODECOPIESANDCOLLATE;
+    pd.Flags = PD_RETURNDC
+        | PD_NOPAGENUMS
+        | PD_NOSELECTION
+        | PD_HIDEPRINTTOFILE
+        | PD_USEDEVMODECOPIESANDCOLLATE;
     pd.nFromPage = 1;
     pd.nToPage = 1;
     pd.nMinPage = 1;
@@ -396,17 +401,29 @@ fn render_print_job(
     let line_height = (tm.tmHeight + tm.tmExternalLeading).max(1);
     let lines_per_page = (geometry.content_height / line_height).max(1) as usize;
 
-    let measure_width = |slice: &[u16]| -> i32 {
+    let measure_width = |slice: &[u16]| -> Option<i32> {
         if slice.is_empty() {
-            return 0;
+            return Some(0);
         }
         let mut size: SIZE = unsafe { zeroed() };
         let ok =
             unsafe { GetTextExtentPoint32W(hdc, slice.as_ptr(), slice.len() as i32, &mut size) };
-        if ok != 0 { size.cx.max(0) } else { 0 }
+        if ok != 0 { Some(size.cx.max(0)) } else { None }
     };
 
-    let pages = paginate(text, geometry.content_width, lines_per_page, measure_width);
+    let Some(pages) = paginate(text, geometry.content_width, lines_per_page, measure_width) else {
+        unsafe {
+            SelectObject(hdc, previous_font);
+            DeleteObject(printer_font);
+        }
+        let error = io::Error::last_os_error();
+        let detail = if error.raw_os_error() == Some(0) {
+            "Unable to measure document text.".to_owned()
+        } else {
+            error.to_string()
+        };
+        return Err(localized_error(IDS_PRINT_JOB_FAILED, detail));
+    };
 
     let doc_name = to_wide_os(display_name);
 
@@ -425,14 +442,19 @@ fn render_print_job(
             SelectObject(hdc, previous_font);
             DeleteObject(printer_font);
         }
-        return Err(localized_error(IDS_PRINT_JOB_FAILED, error));
+        let detail = if error.raw_os_error() == Some(0) {
+            "Unable to start the print job.".to_owned()
+        } else {
+            error.to_string()
+        };
+        return Err(localized_error(IDS_PRINT_JOB_FAILED, detail));
     }
 
-    let mut fatal_error = None;
+    let mut fatal_error = false;
 
     for page in &pages {
         if unsafe { StartPage(hdc) } <= 0 {
-            fatal_error = Some(io::Error::last_os_error());
+            fatal_error = true;
             break;
         }
 
@@ -444,23 +466,30 @@ fn render_print_job(
             let y = geometry.margin_y + (line_idx as i32) * line_height;
             let written = unsafe { TextOutW(hdc, x, y, line.as_ptr(), line.len() as i32) };
             if written == 0 {
-                // TextOut failure is non-fatal for remaining lines, but continue
+                fatal_error = true;
+                break;
             }
         }
 
-        if unsafe { EndPage(hdc) } <= 0 {
-            fatal_error = Some(io::Error::last_os_error());
+        if fatal_error || unsafe { EndPage(hdc) } <= 0 {
+            fatal_error = true;
             break;
         }
     }
 
-    if let Some(err) = fatal_error {
+    if fatal_error {
+        let error = io::Error::last_os_error();
         unsafe {
             AbortDoc(hdc);
             SelectObject(hdc, previous_font);
             DeleteObject(printer_font);
         }
-        return Err(localized_error(IDS_PRINT_JOB_FAILED, err));
+        let detail = if error.raw_os_error() == Some(0) {
+            "The printer failed to render the document.".to_owned()
+        } else {
+            error.to_string()
+        };
+        return Err(localized_error(IDS_PRINT_JOB_FAILED, detail));
     }
 
     if unsafe { EndDoc(hdc) } <= 0 {
@@ -469,7 +498,12 @@ fn render_print_job(
             SelectObject(hdc, previous_font);
             DeleteObject(printer_font);
         }
-        return Err(localized_error(IDS_PRINT_JOB_FAILED, error));
+        let detail = if error.raw_os_error() == Some(0) {
+            "The print job could not be completed.".to_owned()
+        } else {
+            error.to_string()
+        };
+        return Err(localized_error(IDS_PRINT_JOB_FAILED, detail));
     }
 
     unsafe {
@@ -506,7 +540,7 @@ mod tests {
 
     #[test]
     fn empty_text_paginates_to_single_page() {
-        let pages = paginate(&[], 100, 10, |_| 10);
+        let pages = paginate(&[], 100, 10, |_| Some(10)).unwrap();
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].lines, vec![Vec::<u16>::new()]);
     }
@@ -514,7 +548,7 @@ mod tests {
     #[test]
     fn short_line_fits_on_one_page() {
         let text: Vec<u16> = "Hello".encode_utf16().collect();
-        let pages = paginate(&text, 100, 10, |s| s.len() as i32 * 10);
+        let pages = paginate(&text, 100, 10, |s| Some(s.len() as i32 * 10)).unwrap();
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].lines.len(), 1);
         assert_eq!(pages[0].lines[0], text);
@@ -523,7 +557,7 @@ mod tests {
     #[test]
     fn explicit_blank_lines_are_preserved() {
         let text: Vec<u16> = "Line 1\r\n\r\nLine 2".encode_utf16().collect();
-        let pages = paginate(&text, 200, 10, |s| s.len() as i32 * 10);
+        let pages = paginate(&text, 200, 10, |s| Some(s.len() as i32 * 10)).unwrap();
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].lines.len(), 3);
         assert_eq!(String::from_utf16_lossy(&pages[0].lines[0]), "Line 1");
@@ -546,7 +580,7 @@ mod tests {
     fn narrow_width_causes_word_wrapping_at_whitespace() {
         let text: Vec<u16> = "hello world foo bar".encode_utf16().collect();
         // Each char is 10 units. max_width is 60 units -> fits 6 chars ("hello ").
-        let pages = paginate(&text, 60, 10, |s| s.len() as i32 * 10);
+        let pages = paginate(&text, 60, 10, |s| Some(s.len() as i32 * 10)).unwrap();
         assert_eq!(pages.len(), 1);
         let line_strings: Vec<String> = pages[0]
             .lines
@@ -560,7 +594,7 @@ mod tests {
     fn unbroken_token_hard_breaks_and_makes_forward_progress() {
         let text: Vec<u16> = "abcdefghijkl".encode_utf16().collect();
         // Each char 10 units, max_width 40 units -> fits 4 chars.
-        let pages = paginate(&text, 40, 10, |s| s.len() as i32 * 10);
+        let pages = paginate(&text, 40, 10, |s| Some(s.len() as i32 * 10)).unwrap();
         assert_eq!(pages.len(), 1);
         let line_strings: Vec<String> = pages[0]
             .lines
@@ -577,7 +611,7 @@ mod tests {
         assert_eq!(text.len(), 6);
         // Each code unit is 10 units. If max_width is 30, it could try to fit 3 code units.
         // It must not split the 2nd surrogate pair!
-        let pages = paginate(&text, 30, 10, |s| s.len() as i32 * 10);
+        let pages = paginate(&text, 30, 10, |s| Some(s.len() as i32 * 10)).unwrap();
         assert_eq!(pages.len(), 1);
         for line in &pages[0].lines {
             // Every line must contain an even number of code units (intact surrogate pairs)
@@ -599,7 +633,7 @@ mod tests {
     fn multi_page_pagination_splits_lines_across_pages() {
         let text: Vec<u16> = "1\n2\n3\n4\n5".encode_utf16().collect();
         // lines_per_page = 2 -> 3 pages: [1, 2], [3, 4], [5]
-        let pages = paginate(&text, 100, 2, |s| s.len() as i32 * 10);
+        let pages = paginate(&text, 100, 2, |s| Some(s.len() as i32 * 10)).unwrap();
         assert_eq!(pages.len(), 3);
         assert_eq!(pages[0].lines.len(), 2);
         assert_eq!(pages[1].lines.len(), 2);
@@ -642,7 +676,7 @@ mod tests {
     fn wrap_line_skips_consecutive_whitespace_on_wrapped_lines() {
         let text: Vec<u16> = "first    second".encode_utf16().collect();
         // Each char is 10 units. max_width is 60 units -> fits "first "
-        let wrapped = wrap_line(&text, 60, &|s| s.len() as i32 * 10);
+        let wrapped = wrap_line(&text, 60, &|s| Some(s.len() as i32 * 10)).unwrap();
         assert_eq!(wrapped.len(), 2);
         assert_eq!(String::from_utf16_lossy(&wrapped[0]), "first");
         assert_eq!(String::from_utf16_lossy(&wrapped[1]), "second");
@@ -655,5 +689,12 @@ mod tests {
         // "1234567" is 7 cols -> tab 1 adds 1 space -> "X" is at col 8 (length 9).
         // "X" is 1 col -> tab 2 adds 7 spaces -> "Y" is at col 16 (length 17).
         assert_eq!(String::from_utf16_lossy(&expanded), "1234567 X       Y");
+    }
+
+    #[test]
+    fn measurement_failure_propagates_as_none() {
+        let text: Vec<u16> = "Hello world".encode_utf16().collect();
+        let result = paginate(&text, 100, 10, |_| None);
+        assert_eq!(result, None);
     }
 }
