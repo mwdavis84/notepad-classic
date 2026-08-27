@@ -9,6 +9,8 @@ BEGIN
         MENUITEM "저장(&S)\tCtrl+S", ID_FILE_SAVE
         MENUITEM "다른 이름으로 저장(&A)...\tCtrl+Shift+S", ID_FILE_SAVE_AS
         MENUITEM SEPARATOR
+        MENUITEM "인쇄(&P)...\tCtrl+P", ID_FILE_PRINT
+        MENUITEM SEPARATOR
         MENUITEM "끝내기(&X)", ID_FILE_EXIT
     END
     POPUP "편집(&E)"
@@ -98,4 +100,9 @@ BEGIN
     IDS_STATUS_ENCODING_UTF8 "UTF-8"
     IDS_STATUS_ENCODING_UTF8_BOM "BOM 포함 UTF-8"
     IDS_STATUS_ENCODING_UTF16_LE "UTF-16 LE"
+    IDS_PRINT_DIALOG_FAILED "인쇄 대화 상자 오류(오류 %1)."
+    IDS_PRINT_JOB_FAILED "문서를 인쇄할 수 없습니다:\n\n%1"
+    IDS_PRINT_INIT_FAILED "프린터를 초기화할 수 없습니다."
+    IDS_PRINT_MEASURE_FAILED "인쇄를 위한 문서 텍스트를 측정할 수 없습니다."
+    IDS_PRINT_RENDER_FAILED "문서를 렌더링하는 동안 프린터 오류가 발생했습니다."
 END

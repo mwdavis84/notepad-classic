@@ -7,6 +7,8 @@ mod dialogs;
 mod file;
 #[cfg(windows)]
 mod localization;
+#[cfg(windows)]
+mod printing;
 #[cfg(test)]
 mod resource_catalog;
 

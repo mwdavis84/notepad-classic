@@ -9,6 +9,8 @@ BEGIN
         MENUITEM "सहेजें(&S)\tCtrl+S", ID_FILE_SAVE
         MENUITEM "इस रूप में सहेजें(&A)...\tCtrl+Shift+S", ID_FILE_SAVE_AS
         MENUITEM SEPARATOR
+        MENUITEM "प्रिंट करें(&P)...\tCtrl+P", ID_FILE_PRINT
+        MENUITEM SEPARATOR
         MENUITEM "बाहर निकलें(&X)", ID_FILE_EXIT
     END
     POPUP "संपादित करें(&E)"
@@ -98,4 +100,9 @@ BEGIN
     IDS_STATUS_ENCODING_UTF8 "UTF-8"
     IDS_STATUS_ENCODING_UTF8_BOM "BOM के साथ UTF-8"
     IDS_STATUS_ENCODING_UTF16_LE "UTF-16 LE"
+    IDS_PRINT_DIALOG_FAILED "प्रिंट संवाद विफल रहा (त्रुटि %1)।"
+    IDS_PRINT_JOB_FAILED "दस्तावेज़ प्रिंट नहीं किया जा सका:\n\n%1"
+    IDS_PRINT_INIT_FAILED "प्रिंटर प्रारंभ करने में असमर्थ।"
+    IDS_PRINT_MEASURE_FAILED "प्रिंट करने के लिए दस्तावेज़ टेक्स्ट को मापा नहीं जा सका।"
+    IDS_PRINT_RENDER_FAILED "दस्तावेज़ को रेंडर करते समय प्रिंटर विफल रहा।"
 END

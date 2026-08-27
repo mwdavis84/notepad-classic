@@ -9,6 +9,8 @@ BEGIN
         MENUITEM "上書き保存(&S)\tCtrl+S", ID_FILE_SAVE
         MENUITEM "名前を付けて保存(&A)...\tCtrl+Shift+S", ID_FILE_SAVE_AS
         MENUITEM SEPARATOR
+        MENUITEM "印刷(&P)...\tCtrl+P", ID_FILE_PRINT
+        MENUITEM SEPARATOR
         MENUITEM "終了(&X)", ID_FILE_EXIT
     END
     POPUP "編集(&E)"
@@ -98,4 +100,9 @@ BEGIN
     IDS_STATUS_ENCODING_UTF8 "UTF-8"
     IDS_STATUS_ENCODING_UTF8_BOM "BOM 付き UTF-8"
     IDS_STATUS_ENCODING_UTF16_LE "UTF-16 LE"
+    IDS_PRINT_DIALOG_FAILED "印刷ダイアログでエラーが発生しました (エラー %1)。"
+    IDS_PRINT_JOB_FAILED "ドキュメントを印刷できませんでした:\n\n%1"
+    IDS_PRINT_INIT_FAILED "プリンターを初期化できません。"
+    IDS_PRINT_MEASURE_FAILED "印刷用のドキュメント テキストを測定できませんでした。"
+    IDS_PRINT_RENDER_FAILED "ドキュメントのレンダリング中にプリンターでエラーが発生しました。"
 END

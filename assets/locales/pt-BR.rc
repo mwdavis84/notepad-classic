@@ -9,6 +9,8 @@ BEGIN
         MENUITEM "&Salvar\tCtrl+S", ID_FILE_SAVE
         MENUITEM "Salvar &como...\tCtrl+Shift+S", ID_FILE_SAVE_AS
         MENUITEM SEPARATOR
+        MENUITEM "Im&primir...\tCtrl+P", ID_FILE_PRINT
+        MENUITEM SEPARATOR
         MENUITEM "Sai&r", ID_FILE_EXIT
     END
     POPUP "&Editar"
@@ -98,4 +100,9 @@ BEGIN
     IDS_STATUS_ENCODING_UTF8 "UTF-8"
     IDS_STATUS_ENCODING_UTF8_BOM "UTF-8 com BOM"
     IDS_STATUS_ENCODING_UTF16_LE "UTF-16 LE"
+    IDS_PRINT_DIALOG_FAILED "Falha na caixa de diálogo de impressão (erro %1)."
+    IDS_PRINT_JOB_FAILED "Não foi possível imprimir o documento:\n\n%1"
+    IDS_PRINT_INIT_FAILED "Não foi possível inicializar a impressora."
+    IDS_PRINT_MEASURE_FAILED "Não foi possível medir o texto do documento para impressão."
+    IDS_PRINT_RENDER_FAILED "A impressora falhou ao renderizar o documento."
 END

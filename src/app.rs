@@ -43,6 +43,7 @@ use crate::dialogs::{self, SaveDecision};
 use crate::file::{self, TextFormat};
 use crate::localization::ids::*;
 use crate::localization::{self, FormatArg};
+use crate::printing;
 
 const CLASS_NAME: &[u16] = &[
     b'N' as u16,
@@ -86,9 +87,9 @@ fn localized_error(id: usize, detail: impl std::fmt::Display) -> String {
 }
 
 #[derive(Clone, Copy)]
-struct FontChoice {
-    logical: LOGFONTW,
-    point_size_tenths: i32,
+pub(crate) struct FontChoice {
+    pub(crate) logical: LOGFONTW,
+    pub(crate) point_size_tenths: i32,
 }
 
 struct AppState {
@@ -571,7 +572,7 @@ fn create_editor_font(choice: FontChoice, dpi: u32, zoom_percentage: u16) -> HFO
     unsafe { CreateFontIndirectW(&logical) }
 }
 
-fn rendered_font_height(point_size_tenths: i32, dpi: u32, zoom_percentage: u16) -> i32 {
+pub(crate) fn rendered_font_height(point_size_tenths: i32, dpi: u32, zoom_percentage: u16) -> i32 {
     let numerator = i64::from(point_size_tenths.max(1))
         * i64::from(dpi.max(1))
         * i64::from(zoom_percentage.max(1));
@@ -727,6 +728,7 @@ fn create_accelerators() -> Result<HACCEL, String> {
         accel(C, b'O', ID_FILE_OPEN),
         accel(C, b'S', ID_FILE_SAVE),
         accel(CS, b'S', ID_FILE_SAVE_AS),
+        accel(C, b'P', ID_FILE_PRINT),
         accel(C, b'Z', ID_EDIT_UNDO),
         accel(C, b'X', ID_EDIT_CUT),
         accel(C, b'C', ID_EDIT_COPY),
@@ -776,6 +778,7 @@ fn handle_command(state: &AppState, id: usize) {
         ID_FILE_SAVE_AS => {
             save_document(state, true);
         }
+        ID_FILE_PRINT => print_document(state),
         ID_FILE_EXIT => unsafe {
             SendMessageW(state.hwnd.get(), WM_CLOSE, 0, 0);
         },
@@ -815,6 +818,16 @@ fn handle_command(state: &AppState, id: usize) {
         ID_VIEW_STATUS => toggle_status(state),
         ID_HELP_ABOUT => dialogs::show_about(state.hwnd.get(), state.instance),
         _ => {}
+    }
+}
+
+fn print_document(state: &AppState) {
+    let hwnd = state.hwnd.get();
+    let text = get_editor_text_utf16(state.editor.get());
+    let font_choice = state.font_choice.get();
+    let display_name = state.display_name();
+    if let Err(message) = printing::print(hwnd, &text, font_choice, &display_name) {
+        dialogs::show_error(Some(hwnd), &app_name(), &message);
     }
 }
 
@@ -1947,5 +1960,11 @@ mod tests {
 
         let parts_single = calculate_status_parts(800, &[72]);
         assert_eq!(parts_single, vec![728, -1]);
+    }
+
+    #[test]
+    fn accelerators_table_creates_successfully_with_ctrl_p() {
+        let table = create_accelerators().expect("accelerator table must create");
+        assert_ne!(unsafe { DestroyAcceleratorTable(table) }, 0);
     }
 }
