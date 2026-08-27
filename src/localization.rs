@@ -1,10 +1,11 @@
 //! The small runtime half of the embedded Win32 localization design.
 //!
 //! Windows performs the normal resource-language selection.  Only a failed
-//! lookup is retried against the neutral English resources compiled into this
+//! lookup is retried against the English (United States) resources compiled into this
 //! executable, which keeps the portable EXE and MSIX builds identical.
 
 use std::ffi::OsStr;
+use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
 use std::ptr::null;
 
@@ -61,6 +62,10 @@ pub fn menu(id: usize) -> Option<HMENU> {
     if !menu.is_null() {
         return Some(menu);
     }
+    english_menu(instance, id)
+}
+
+fn english_menu(instance: HINSTANCE, id: usize) -> Option<HMENU> {
     let resource = unsafe {
         FindResourceExW(
             instance,
@@ -72,10 +77,19 @@ pub fn menu(id: usize) -> Option<HMENU> {
     if resource.is_null() {
         return None;
     }
-    let data = unsafe { LockResource(LoadResource(instance, resource)) };
-    (!data.is_null())
-        .then(|| unsafe { LoadMenuIndirectW(data) })
-        .filter(|menu| !menu.is_null())
+    let loaded = unsafe { LoadResource(instance, resource) };
+    if loaded.is_null() {
+        return None;
+    }
+    let data = unsafe { LockResource(loaded) };
+    if data.is_null() {
+        return None;
+    }
+    // SAFETY: loaded resource memory remains valid for the lifetime of the
+    // module. LoadMenuIndirectW consumes the template synchronously and does
+    // not retain this pointer.
+    let menu = unsafe { LoadMenuIndirectW(data) };
+    (!menu.is_null()).then_some(menu)
 }
 
 fn normal_string(instance: HINSTANCE, id: usize) -> Option<Vec<u16>> {
@@ -118,28 +132,35 @@ fn english_string_from_resource(
         return None;
     }
     let size = unsafe { SizeofResource(instance, resource) } as usize;
-    let data = unsafe { LockResource(LoadResource(instance, resource)) } as *const u16;
-    if data.is_null() || size < 2 {
+    if size < 2 || size % size_of::<u16>() != 0 {
         return None;
     }
+    let loaded = unsafe { LoadResource(instance, resource) };
+    if loaded.is_null() {
+        return None;
+    }
+    let data = unsafe { LockResource(loaded) } as *const u16;
+    if data.is_null() {
+        return None;
+    }
+    // SAFETY: SizeofResource supplied the byte length, it was checked to be a
+    // nonzero multiple of u16, and loaded resource memory remains module-owned.
     let units = unsafe { std::slice::from_raw_parts(data, size / 2) };
     let mut cursor = 0usize;
+    let mut selected = None;
     for index in 0..16 {
         let length = *units.get(cursor)? as usize;
         cursor = cursor.checked_add(1)?;
         let end = cursor.checked_add(length)?;
         let value = units.get(cursor..end)?;
-        if index == slot {
-            if value.is_empty() {
-                return None;
-            }
-            let mut output = value.to_vec();
-            output.push(0);
-            return Some(output);
+        if index == slot && !value.is_empty() {
+            selected = Some(value.to_vec());
         }
         cursor = end;
     }
-    None
+    let mut output = selected?;
+    output.push(0);
+    Some(output)
 }
 
 fn format_units(template: &[u16], args: &[FormatArg<'_>]) -> Option<Vec<u16>> {
@@ -195,6 +216,7 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use windows_sys::Win32::UI::WindowsAndMessaging::DestroyMenu;
 
     #[test]
     fn formatting_supports_reordered_repeated_and_literal_percent_arguments() {
@@ -215,7 +237,30 @@ mod tests {
         for &id in ids::LOCALIZED_STRING_IDS {
             assert!(string(id).is_some(), "missing string resource {id}");
         }
-        assert!(menu(ids::IDR_MAIN_MENU).is_some());
+        let menu = menu(ids::IDR_MAIN_MENU).expect("missing main menu resource");
+        assert_ne!(unsafe { DestroyMenu(menu) }, 0);
+    }
+
+    #[test]
+    fn explicit_english_string_fallback_matches_normal_loader_for_every_string() {
+        let instance = unsafe { GetModuleHandleW(null()) };
+        assert!(!instance.is_null());
+        for &id in ids::LOCALIZED_STRING_IDS {
+            let normal = normal_string(instance, id)
+                .unwrap_or_else(|| panic!("normal loader could not load string {id}"));
+            let fallback = english_string(instance, id)
+                .unwrap_or_else(|| panic!("en-US fallback could not load string {id}"));
+            assert_eq!(normal, fallback, "fallback mismatch for string {id}");
+        }
+    }
+
+    #[test]
+    fn explicit_english_menu_fallback_creates_the_main_menu() {
+        let instance = unsafe { GetModuleHandleW(null()) };
+        assert!(!instance.is_null());
+        let menu = english_menu(instance, ids::IDR_MAIN_MENU)
+            .expect("en-US fallback could not load the main menu");
+        assert_ne!(unsafe { DestroyMenu(menu) }, 0);
     }
 
     #[test]

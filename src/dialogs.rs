@@ -196,8 +196,7 @@ pub fn show_error_with_path(owner: Option<HWND>, title: &str, template_id: usize
     }
 }
 
-pub fn os_error(context: &str) -> String {
-    let error = io::Error::last_os_error();
+pub fn os_error(context: &str, error: &io::Error) -> String {
     if error.raw_os_error() == Some(0) {
         context.to_owned()
     } else {
@@ -220,12 +219,16 @@ fn localized_format(id: usize, args: &[FormatArg<'_>]) -> String {
 }
 
 fn sys_link(url: &str, label_id: usize) -> String {
-    let label = localized_string(label_id)
+    let label = escape_sys_link_label(&localized_string(label_id));
+    format!("<a href=\"{url}\">{label}</a>")
+}
+
+fn escape_sys_link_label(label: &str) -> String {
+    label
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-        .replace('"', "&quot;");
-    format!("<a href=\"{url}\">{label}</a>")
+        .replace('"', "&quot;")
 }
 
 fn to_wide_os(text: &OsStr) -> Vec<u16> {
@@ -1094,6 +1097,14 @@ mod tests {
             assert!(link.ends_with("</a>"));
             assert!(link.contains(url));
         }
+    }
+
+    #[test]
+    fn about_dialog_link_labels_escape_xml_sensitive_text() {
+        assert_eq!(
+            escape_sys_link_label("A & B <C> \"D\""),
+            "A &amp; B &lt;C&gt; &quot;D&quot;"
+        );
     }
 
     #[test]

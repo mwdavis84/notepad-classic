@@ -11,12 +11,18 @@ MSIX builds identical.
 ## Adding a locale
 
 1. Copy `assets/locales/en-US.rc`, rename it for the Windows language tag, and
-   set its numeric RC `LANGUAGE` primary/sub-language pair.
+   set its single numeric RC `LANGUAGE` primary/sub-language pair. Choosing the
+   correct Windows numeric pair for the translation is the translator's
+   responsibility; the build rejects missing, malformed, or duplicate pairs.
 2. Keep the main menu's popup nesting, separators, and command IDs unchanged.
-   Translate labels, mnemonics, and shortcut display text only.
+   The validator supports only `IDR_MAIN_MENU MENU`, `POPUP`, `BEGIN`/`END`,
+   `MENUITEM SEPARATOR`, and `MENUITEM "localized label", ID_COMMAND`; trailing
+   menu flags are not supported. Translate labels, mnemonics, and shortcut
+   display text only.
 3. Add every `IDS_*` value from `assets/resource.h`. The build rejects missing,
-   unknown, or duplicate entries; it also checks menu shape and numbered
-   placeholders against English.
+   unknown, duplicate, or empty entries; zero-length localized strings are not
+   supported. It also checks menu shape and numbered placeholders against
+   English.
 4. Add an `#include "locales/<tag>.rc"` line to `assets/notepad-classic.rc`.
    The build validates every `.rc` file in `assets/locales`; the root resource
    script decides which validated catalogs are compiled. For a shipped MSIX
@@ -28,10 +34,14 @@ generates the Rust constants from that header without an extra dependency.
 
 Use UTF-8 files, complete sentences, and numbered inserts such as `%1` rather
 than translated fragments. Inserts may be reordered or repeated; `%%` is a
-literal percent. Preserve mnemonics (`&`) and shortcut display text, and avoid
-localizing file extensions/patterns, `.LOG`, class names, shell verbs, URLs, or
-font family names. Paths are inserted as UTF-16 directly, so they are never
-lossily converted through UTF-8. The root resource script and build invocation
+literal percent. In MENU labels, `&` marks a Win32 mnemonic; choose an
+appropriate mnemonic and manually test for collisions. Do not add `&` to
+ordinary strings or About-dialog link labels expecting mnemonic behavior. About
+labels are XML-escaped before insertion into SysLink markup, while hyperlink
+URLs are fixed functional constants and are never localized. Avoid localizing
+file extensions/patterns, `.LOG`, class names, shell verbs, URLs, or font family
+names. Paths are inserted as UTF-16 directly, so they are never lossily
+converted through UTF-8. The root resource script and build invocation
 explicitly select Windows code page 65001, so non-ASCII UTF-8 catalog text is
 compiled consistently.
 

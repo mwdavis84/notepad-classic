@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::ffi::{OsStr, OsString, c_void};
+use std::io;
 use std::mem::{size_of, zeroed};
 use std::os::windows::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
@@ -172,18 +173,30 @@ pub fn run() -> Result<(), String> {
 
     let instance = unsafe { GetModuleHandleW(null()) };
     if instance.is_null() {
-        return Err(dialogs::os_error(&localized_string(IDS_GET_MODULE_FAILED)));
+        // Capture immediately: localization and cleanup also call Win32 APIs and
+        // must never replace the error reported by the failed operation.
+        let error = io::Error::last_os_error();
+        return Err(dialogs::os_error(
+            &localized_string(IDS_GET_MODULE_FAILED),
+            &error,
+        ));
     }
     let find_message = unsafe { RegisterWindowMessageW(FINDMSGSTRINGW) };
     if find_message == 0 {
-        return Err(dialogs::os_error(&localized_string(
-            IDS_REGISTER_FIND_FAILED,
-        )));
+        let error = io::Error::last_os_error();
+        return Err(dialogs::os_error(
+            &localized_string(IDS_REGISTER_FIND_FAILED),
+            &error,
+        ));
     }
 
     let icon = unsafe { LoadIconW(instance, IDI_APP_ICON as *const u16) };
     if icon.is_null() {
-        return Err(dialogs::os_error(&localized_string(IDS_LOAD_ICON_FAILED)));
+        let error = io::Error::last_os_error();
+        return Err(dialogs::os_error(
+            &localized_string(IDS_LOAD_ICON_FAILED),
+            &error,
+        ));
     }
     let cursor = unsafe { LoadCursorW(null_mut(), IDC_IBEAM) };
     let class = WNDCLASSEXW {
@@ -201,9 +214,11 @@ pub fn run() -> Result<(), String> {
         hIconSm: icon,
     };
     if unsafe { RegisterClassExW(&class) } == 0 {
-        return Err(dialogs::os_error(&localized_string(
-            IDS_REGISTER_CLASS_FAILED,
-        )));
+        let error = io::Error::last_os_error();
+        return Err(dialogs::os_error(
+            &localized_string(IDS_REGISTER_CLASS_FAILED),
+            &error,
+        ));
     }
 
     let menu = create_menu()?;
@@ -232,9 +247,11 @@ pub fn run() -> Result<(), String> {
         )
     };
     if hwnd.is_null() {
-        return Err(dialogs::os_error(&localized_string(
-            IDS_CREATE_WINDOW_FAILED,
-        )));
+        let error = io::Error::last_os_error();
+        return Err(dialogs::os_error(
+            &localized_string(IDS_CREATE_WINDOW_FAILED),
+            &error,
+        ));
     }
 
     unsafe {
@@ -252,10 +269,12 @@ pub fn run() -> Result<(), String> {
     loop {
         let result = unsafe { GetMessageW(&mut message, null_mut(), 0, 0) };
         if result == -1 {
+            let error = io::Error::last_os_error();
             unsafe { DestroyAcceleratorTable(accelerator) };
-            return Err(dialogs::os_error(&localized_string(
-                IDS_MESSAGE_LOOP_FAILED,
-            )));
+            return Err(dialogs::os_error(
+                &localized_string(IDS_MESSAGE_LOOP_FAILED),
+                &error,
+            ));
         }
         if result == 0 {
             break;
@@ -430,9 +449,11 @@ fn create_children(state: &AppState) -> Result<(), String> {
         )
     };
     if status.is_null() {
-        return Err(dialogs::os_error(&localized_string(
-            IDS_CREATE_STATUS_FAILED,
-        )));
+        let error = io::Error::last_os_error();
+        return Err(dialogs::os_error(
+            &localized_string(IDS_CREATE_STATUS_FAILED),
+            &error,
+        ));
     }
     state.status.set(status);
     unsafe {
@@ -486,9 +507,11 @@ fn create_editor(state: &AppState) -> Result<HWND, String> {
         )
     };
     if editor.is_null() {
-        Err(dialogs::os_error(&localized_string(
-            IDS_CREATE_EDITOR_FAILED,
-        )))
+        let error = io::Error::last_os_error();
+        Err(dialogs::os_error(
+            &localized_string(IDS_CREATE_EDITOR_FAILED),
+            &error,
+        ))
     } else {
         Ok(editor)
     }
@@ -579,8 +602,16 @@ fn layout_children(state: &AppState) {
 }
 
 fn create_menu() -> Result<HMENU, String> {
-    localization::menu(IDR_MAIN_MENU)
-        .ok_or_else(|| dialogs::os_error(&localized_string(IDS_LOAD_MENU_FAILED)))
+    match localization::menu(IDR_MAIN_MENU) {
+        Some(menu) => Ok(menu),
+        None => {
+            let error = io::Error::last_os_error();
+            Err(dialogs::os_error(
+                &localized_string(IDS_LOAD_MENU_FAILED),
+                &error,
+            ))
+        }
+    }
 }
 
 fn create_accelerators() -> Result<HACCEL, String> {
@@ -608,9 +639,11 @@ fn create_accelerators() -> Result<HACCEL, String> {
     ];
     let handle = unsafe { CreateAcceleratorTableW(entries.as_ptr(), entries.len() as i32) };
     if handle.is_null() {
-        Err(dialogs::os_error(&localized_string(
-            IDS_CREATE_ACCELERATORS_FAILED,
-        )))
+        let error = io::Error::last_os_error();
+        Err(dialogs::os_error(
+            &localized_string(IDS_CREATE_ACCELERATORS_FAILED),
+            &error,
+        ))
     } else {
         Ok(handle)
     }
@@ -1000,10 +1033,11 @@ fn choose_font(state: &AppState) {
     };
     let font = create_editor_font(choice, state.dpi.get());
     if font.is_null() {
+        let error = io::Error::last_os_error();
         dialogs::show_error(
             Some(hwnd),
             &app_name(),
-            &dialogs::os_error(&localized_string(IDS_CREATE_FONT_FAILED)),
+            &dialogs::os_error(&localized_string(IDS_CREATE_FONT_FAILED), &error),
         );
         return;
     }

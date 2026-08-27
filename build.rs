@@ -31,6 +31,7 @@ fn main() {
     println!("cargo:rerun-if-changed={}", english_path.display());
     let english = resource_catalog::validate_locale(&english_source, &known_strings, None)
         .unwrap_or_else(|error| panic!("invalid English catalog: {error}"));
+    let mut catalog_languages = vec![(english_path.display().to_string(), english.language())];
     let locale_entries = fs::read_dir(&locales)
         .unwrap_or_else(|error| panic!("unable to read {}: {error}", locales.display()));
     for entry in locale_entries.filter_map(Result::ok) {
@@ -43,11 +44,21 @@ fn main() {
             if path != english_path {
                 let source = fs::read_to_string(&path)
                     .unwrap_or_else(|error| panic!("unable to read {}: {error}", path.display()));
-                resource_catalog::validate_locale(&source, &known_strings, Some(&english))
-                    .unwrap_or_else(|error| panic!("invalid locale {}: {error}", path.display()));
+                let locale =
+                    resource_catalog::validate_locale(&source, &known_strings, Some(&english))
+                        .unwrap_or_else(|error| {
+                            panic!("invalid locale {}: {error}", path.display())
+                        });
+                catalog_languages.push((path.display().to_string(), locale.language()));
             }
         }
     }
+    resource_catalog::validate_unique_languages(
+        catalog_languages
+            .iter()
+            .map(|(path, language)| (path.as_str(), *language)),
+    )
+    .unwrap_or_else(|error| panic!("invalid locale languages: {error}"));
     let generated = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo did not set OUT_DIR"))
         .join("resource_ids.rs");
     fs::write(&generated, resource_catalog::generate_rust(&defines))
