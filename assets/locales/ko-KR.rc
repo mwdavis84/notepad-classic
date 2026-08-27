@@ -103,4 +103,6 @@ BEGIN
     IDS_PRINT_DIALOG_FAILED "인쇄 대화 상자 오류(오류 %1)."
     IDS_PRINT_JOB_FAILED "문서를 인쇄할 수 없습니다:\n\n%1"
     IDS_PRINT_INIT_FAILED "프린터를 초기화할 수 없습니다."
+    IDS_PRINT_MEASURE_FAILED "인쇄를 위한 문서 텍스트를 측정할 수 없습니다."
+    IDS_PRINT_RENDER_FAILED "문서를 렌더링하는 동안 프린터 오류가 발생했습니다."
 END

@@ -103,4 +103,6 @@ BEGIN
     IDS_PRINT_DIALOG_FAILED "Error en el cuadro de diálogo de impresión (error %1)."
     IDS_PRINT_JOB_FAILED "No se pudo imprimir el documento:\n\n%1"
     IDS_PRINT_INIT_FAILED "No se puede inicializar la impresora."
+    IDS_PRINT_MEASURE_FAILED "No se pudo medir el texto del documento para imprimir."
+    IDS_PRINT_RENDER_FAILED "La impresora falló al representar el documento."
 END

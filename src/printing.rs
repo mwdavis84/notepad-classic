@@ -416,12 +416,7 @@ fn render_print_job(
             SelectObject(hdc, previous_font);
             DeleteObject(printer_font);
         }
-        let error = io::Error::last_os_error();
-        let detail = if error.raw_os_error() == Some(0) {
-            "Unable to measure document text.".to_owned()
-        } else {
-            error.to_string()
-        };
+        let detail = localized_string(IDS_PRINT_MEASURE_FAILED);
         return Err(localized_error(IDS_PRINT_JOB_FAILED, detail));
     };
 
@@ -442,19 +437,20 @@ fn render_print_job(
             SelectObject(hdc, previous_font);
             DeleteObject(printer_font);
         }
-        let detail = if error.raw_os_error() == Some(0) {
-            "Unable to start the print job.".to_owned()
-        } else {
-            error.to_string()
-        };
-        return Err(localized_error(IDS_PRINT_JOB_FAILED, detail));
+        return Err(localized_error(IDS_PRINT_JOB_FAILED, error));
     }
 
-    let mut fatal_error = false;
+    enum PageFailure {
+        StartPage(io::Error),
+        RenderText,
+        EndPage(io::Error),
+    }
+
+    let mut page_failure: Option<PageFailure> = None;
 
     for page in &pages {
         if unsafe { StartPage(hdc) } <= 0 {
-            fatal_error = true;
+            page_failure = Some(PageFailure::StartPage(io::Error::last_os_error()));
             break;
         }
 
@@ -466,30 +462,36 @@ fn render_print_job(
             let y = geometry.margin_y + (line_idx as i32) * line_height;
             let written = unsafe { TextOutW(hdc, x, y, line.as_ptr(), line.len() as i32) };
             if written == 0 {
-                fatal_error = true;
+                page_failure = Some(PageFailure::RenderText);
                 break;
             }
         }
 
-        if fatal_error || unsafe { EndPage(hdc) } <= 0 {
-            fatal_error = true;
+        if page_failure.is_some() {
+            break;
+        }
+
+        if unsafe { EndPage(hdc) } <= 0 {
+            page_failure = Some(PageFailure::EndPage(io::Error::last_os_error()));
             break;
         }
     }
 
-    if fatal_error {
-        let error = io::Error::last_os_error();
+    if let Some(failure) = page_failure {
         unsafe {
             AbortDoc(hdc);
             SelectObject(hdc, previous_font);
             DeleteObject(printer_font);
         }
-        let detail = if error.raw_os_error() == Some(0) {
-            "The printer failed to render the document.".to_owned()
-        } else {
-            error.to_string()
+        return match failure {
+            PageFailure::StartPage(error) | PageFailure::EndPage(error) => {
+                Err(localized_error(IDS_PRINT_JOB_FAILED, error))
+            }
+            PageFailure::RenderText => {
+                let detail = localized_string(IDS_PRINT_RENDER_FAILED);
+                Err(localized_error(IDS_PRINT_JOB_FAILED, detail))
+            }
         };
-        return Err(localized_error(IDS_PRINT_JOB_FAILED, detail));
     }
 
     if unsafe { EndDoc(hdc) } <= 0 {
@@ -498,12 +500,7 @@ fn render_print_job(
             SelectObject(hdc, previous_font);
             DeleteObject(printer_font);
         }
-        let detail = if error.raw_os_error() == Some(0) {
-            "The print job could not be completed.".to_owned()
-        } else {
-            error.to_string()
-        };
-        return Err(localized_error(IDS_PRINT_JOB_FAILED, detail));
+        return Err(localized_error(IDS_PRINT_JOB_FAILED, error));
     }
 
     unsafe {

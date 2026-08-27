@@ -103,4 +103,6 @@ BEGIN
     IDS_PRINT_DIALOG_FAILED "Fehler im Druckdialog (Fehler %1)."
     IDS_PRINT_JOB_FAILED "Das Dokument konnte nicht gedruckt werden:\n\n%1"
     IDS_PRINT_INIT_FAILED "Der Drucker konnte nicht initialisiert werden."
+    IDS_PRINT_MEASURE_FAILED "Der Dokumenttext konnte für den Druck nicht gemessen werden."
+    IDS_PRINT_RENDER_FAILED "Beim Rendern des Dokuments ist ein Druckerfehler aufgetreten."
 END

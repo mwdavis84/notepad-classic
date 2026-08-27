@@ -103,4 +103,6 @@ BEGIN
     IDS_PRINT_DIALOG_FAILED "La boîte de dialogue d'impression a échoué (erreur %1)."
     IDS_PRINT_JOB_FAILED "Impossible d'imprimer le document :\n\n%1"
     IDS_PRINT_INIT_FAILED "Impossible d'initialiser l'imprimante."
+    IDS_PRINT_MEASURE_FAILED "Impossible de mesurer le texte du document pour l'impression."
+    IDS_PRINT_RENDER_FAILED "L'imprimante a échoué lors du rendu du document."
 END

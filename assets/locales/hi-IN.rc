@@ -103,4 +103,6 @@ BEGIN
     IDS_PRINT_DIALOG_FAILED "प्रिंट संवाद विफल रहा (त्रुटि %1)।"
     IDS_PRINT_JOB_FAILED "दस्तावेज़ प्रिंट नहीं किया जा सका:\n\n%1"
     IDS_PRINT_INIT_FAILED "प्रिंटर प्रारंभ करने में असमर्थ।"
+    IDS_PRINT_MEASURE_FAILED "प्रिंट करने के लिए दस्तावेज़ टेक्स्ट को मापा नहीं जा सका।"
+    IDS_PRINT_RENDER_FAILED "दस्तावेज़ को रेंडर करते समय प्रिंटर विफल रहा।"
 END

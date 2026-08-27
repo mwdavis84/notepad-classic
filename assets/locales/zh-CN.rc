@@ -103,4 +103,6 @@ BEGIN
     IDS_PRINT_DIALOG_FAILED "打印对话框失败 (错误 %1)。"
     IDS_PRINT_JOB_FAILED "无法打印文档:\n\n%1"
     IDS_PRINT_INIT_FAILED "无法初始化打印机。"
+    IDS_PRINT_MEASURE_FAILED "无法测量用于打印的文档文本。"
+    IDS_PRINT_RENDER_FAILED "打印机在呈现文档时失败。"
 END

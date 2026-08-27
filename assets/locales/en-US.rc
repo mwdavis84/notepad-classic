@@ -103,4 +103,6 @@ BEGIN
     IDS_PRINT_DIALOG_FAILED "The print dialog failed (error %1)."
     IDS_PRINT_JOB_FAILED "Could not print the document:\n\n%1"
     IDS_PRINT_INIT_FAILED "Unable to initialize the printer."
+    IDS_PRINT_MEASURE_FAILED "Unable to measure document text for printing."
+    IDS_PRINT_RENDER_FAILED "The printer failed while rendering the document."
 END
