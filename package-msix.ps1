@@ -23,6 +23,9 @@
 .PARAMETER MakeAppxPath
     Explicit path to makeappx.exe if not in PATH or standard Windows SDK directories.
 
+.PARAMETER MakePriPath
+    Explicit path to makepri.exe if not in PATH or standard Windows SDK directories.
+
 .PARAMETER SignToolPath
     Explicit path to signtool.exe if not in PATH or standard Windows SDK directories.
 
@@ -56,6 +59,7 @@ param (
     [string]$Target = "x86_64-pc-windows-msvc",
     [switch]$Bundle,
     [string]$MakeAppxPath,
+    [string]$MakePriPath,
     [string]$SignToolPath,
     [switch]$SignForLocalTesting,
     [switch]$SkipBuild
@@ -125,12 +129,18 @@ function Find-SdkTool {
     return $null
 }
 
-# 2. Locate makeappx.exe
+# 2. Locate makeappx.exe and makepri.exe
 $makeappx = Find-SdkTool -ToolName "makeappx.exe" -ExplicitPath $MakeAppxPath
 if (-not $makeappx) {
     Write-Error "Could not find 'makeappx.exe'. Please install the Windows 10/11 SDK or specify -MakeAppxPath."
 }
 Write-Host "Found makeappx: $makeappx" -ForegroundColor Cyan
+
+$makepri = Find-SdkTool -ToolName "makepri.exe" -ExplicitPath $MakePriPath
+if (-not $makepri) {
+    Write-Error "Could not find 'makepri.exe'. Please install the Windows 10/11 SDK or specify -MakePriPath."
+}
+Write-Host "Found makepri: $makepri" -ForegroundColor Cyan
 
 # 3. Extract and validate version from Cargo.toml
 $cargoTomlPath = Join-Path $PSScriptRoot "Cargo.toml"
@@ -268,6 +278,28 @@ foreach ($currentTarget in $targetsToProcess) {
     $manifestContent = [regex]::Replace($manifestContent, '(<Identity[\s\S]*?\bProcessorArchitecture=")[^"]+', '${1}' + $currentArch)
     $manifestDest = Join-Path $layoutDir "AppxManifest.xml"
     Set-Content -Path $manifestDest -Value $manifestContent -Encoding Utf8
+
+    # Generate Package Resource Index (resources.pri) for Windows Modern Resource Technology (MRT)
+    # Keeping the priconfig.xml outside the indexed package staging root
+    Write-Host "Generating Package Resource Index (resources.pri)..." -ForegroundColor Cyan
+    $priconfigPath = Join-Path $packageOutputDir "msix-priconfig-$currentArch.xml"
+    if (Test-Path $priconfigPath) {
+        Remove-Item -Path $priconfigPath -Force
+    }
+    & $makepri createconfig /cf "$priconfigPath" /dq en-US /pv 10.0.0 /o
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "makepri createconfig failed with exit code $LASTEXITCODE"
+    }
+
+    $priPath = Join-Path $layoutDir "resources.pri"
+    & $makepri new /pr "$layoutDir" /cf "$priconfigPath" /of "$priPath" /o
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "makepri new failed with exit code $LASTEXITCODE"
+    }
+
+    if (Test-Path $priconfigPath) {
+        Remove-Item -Path $priconfigPath -Force
+    }
 
     # Pack with makeappx.exe
     $packageName = "notepad-classic_${msixVersion}_${currentArch}.msix"
