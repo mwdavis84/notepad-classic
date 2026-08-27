@@ -1,6 +1,4 @@
-[target.'cfg(windows)']
-rustflags = [
-    "-C", "link-arg=/MANIFEST:EMBED",
-    "-C", "link-arg=/MANIFESTINPUT:notepad-classic.manifest",
-]
+# The application manifest is embedded by assets/notepad-classic.rc. Keeping it
+# out of global rustflags prevents the app-relative path from being applied to
+# dependency build scripts and proc-macro executables.
 

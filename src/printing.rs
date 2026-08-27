@@ -1,9 +1,11 @@
-//! Native Win32 printing implementation for Notepad Classic.
+//! Native Windows printing implementation for Notepad Classic.
 //!
-//! Provides standard Windows Print dialog (`PrintDlgW`) interaction and native
-//! GDI page rendering (`StartDocW`, `StartPage`, `EndPage`, `EndDoc`).
-//! Printing uses the logical unzoomed font choice and the selected printer's
-//! actual DC metrics.
+//! The primary path uses `Windows.Graphics.Printing` so the system print UI can
+//! request pagination, preview surfaces, and the final document. The proven
+//! `PrintDlgW`/GDI implementation remains as a fallback when that API is not
+//! available. Both paths use the logical unzoomed font choice.
+
+mod modern;
 
 use std::ffi::OsStr;
 use std::io;
@@ -307,6 +309,28 @@ where
 }
 
 pub fn print(
+    owner: HWND,
+    text: &[u16],
+    font_choice: FontChoice,
+    display_name: &OsStr,
+) -> Result<(), String> {
+    match modern::show_print_ui(owner, text, font_choice, display_name) {
+        Ok(()) => return Ok(()),
+        Err(modern::ModernPrintError::Unavailable) => {}
+        Err(modern::ModernPrintError::Failed(_error)) => {
+            return Err(localized_string(IDS_PRINT_INIT_FAILED));
+        }
+    }
+
+    legacy_print(owner, text, font_choice, display_name)
+}
+
+/// Balances a deferred WinRT initialization on the application UI thread.
+pub fn shutdown() {
+    modern::shutdown();
+}
+
+fn legacy_print(
     owner: HWND,
     text: &[u16],
     font_choice: FontChoice,

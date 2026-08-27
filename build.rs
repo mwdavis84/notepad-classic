@@ -13,6 +13,7 @@ fn main() {
     let locales = assets.join("locales");
     println!("cargo:rerun-if-changed=assets/notepad-classic.ico");
     println!("cargo:rerun-if-changed=assets/notepad-classic.rc");
+    println!("cargo:rerun-if-changed=notepad-classic.manifest");
     println!("cargo:rerun-if-changed={}", header.display());
     println!("cargo:rerun-if-changed={}", locales.display());
     let defines = resource_catalog::parse_header(
