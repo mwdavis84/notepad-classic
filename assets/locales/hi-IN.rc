@@ -92,4 +92,10 @@ BEGIN
     IDS_FILE_DIALOG_FAILED "फ़ाइल संवाद विफल रहा (त्रुटि %1)।"
     IDS_FILTER_TEXT_DOCUMENTS "पाठ दस्तावेज़"
     IDS_FILTER_ALL_FILES "सभी फ़ाइलें"
+    IDS_STATUS_EOL_CRLF "Windows (CRLF)"
+    IDS_STATUS_EOL_LF "Unix (LF)"
+    IDS_STATUS_EOL_CR "Macintosh (CR)"
+    IDS_STATUS_ENCODING_UTF8 "UTF-8"
+    IDS_STATUS_ENCODING_UTF8_BOM "BOM के साथ UTF-8"
+    IDS_STATUS_ENCODING_UTF16_LE "UTF-16 LE"
 END

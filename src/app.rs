@@ -7,14 +7,16 @@ use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::rc::Rc;
 
-use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, SYSTEMTIME, WPARAM};
+use windows_sys::Win32::Foundation::{
+    HINSTANCE, HWND, LPARAM, LRESULT, RECT, SIZE, SYSTEMTIME, WPARAM,
+};
 use windows_sys::Win32::Globalization::{
     CSTR_EQUAL, CompareStringOrdinal, GetDateFormatEx, GetTimeFormatEx,
 };
 use windows_sys::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, COLOR_WINDOW, CreateFontIndirectW, DEFAULT_CHARSET, DEFAULT_GUI_FONT,
-    DeleteObject, FF_MODERN, FIXED_PITCH, FW_NORMAL, GetStockObject, GetSysColorBrush, HFONT,
-    LOGFONTW, UpdateWindow,
+    DeleteObject, FF_MODERN, FIXED_PITCH, FW_NORMAL, GetDC, GetStockObject, GetSysColorBrush,
+    GetTextExtentPoint32W, HFONT, LOGFONTW, ReleaseDC, SelectObject, UpdateWindow,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::SystemInformation::GetLocalTime;
@@ -67,7 +69,6 @@ const ZOOM_LEVELS: [u16; 24] = [
     300, 400, 500,
 ];
 const DEFAULT_ZOOM_INDEX: usize = 9;
-const STATUS_ZOOM_PART_WIDTH_96_DPI: i32 = 72;
 
 fn app_name() -> String {
     localized_string(IDS_APP_NAME)
@@ -391,7 +392,7 @@ unsafe extern "system" fn window_proc(
                     state.dirty.set(true);
                     state.set_title();
                 }
-                update_status(&state);
+                update_status_position(&state);
             } else {
                 handle_command(&state, id);
             }
@@ -408,7 +409,7 @@ unsafe extern "system" fn window_proc(
             0
         }
         WM_APP_UPDATE_STATUS => {
-            update_status(&state);
+            update_status_position(&state);
             0
         }
         WM_DESTROY => {
@@ -800,7 +801,7 @@ fn handle_command(state: &AppState, id: usize) {
         ID_EDIT_GOTO => go_to_line(state),
         ID_EDIT_SELECT_ALL => {
             unsafe { SendMessageW(state.editor.get(), EM_SETSEL, 0, -1) };
-            update_status(state);
+            update_status_position(state);
         }
         ID_EDIT_TIME_DATE => insert_time_date(state),
         ID_FORMAT_WRAP => toggle_word_wrap(state),
@@ -1138,16 +1139,50 @@ fn update_status(state: &AppState) {
     if !state.status_is_visible() || editor.is_null() || status.is_null() {
         return;
     }
+    let format = state.format.get();
+    let zoom_text = localization::format(
+        IDS_STATUS_ZOOM,
+        &[FormatArg::Unsigned(
+            zoom_percent(state.zoom_index.get()) as u64
+        )],
+    );
+    let eol_text = localization::text(format.newline.status_resource_id());
+    let encoding_text = localization::text(format.encoding.status_resource_id());
+
+    let dpi = state.dpi.get();
+    let zoom_width =
+        measure_status_text_width(status, localization::without_trailing_nul(&zoom_text), dpi);
+    let eol_width =
+        measure_status_text_width(status, localization::without_trailing_nul(&eol_text), dpi);
+    let enc_width = measure_status_text_width(
+        status,
+        localization::without_trailing_nul(&encoding_text),
+        dpi,
+    );
+
+    let mut status_client: RECT = unsafe { zeroed() };
+    unsafe { GetClientRect(status, &mut status_client) };
+    let client_width = status_client.right - status_client.left;
+    let parts = calculate_status_parts(client_width, &[zoom_width, eol_width, enc_width]);
+    unsafe {
+        SendMessageW(status, SB_SETPARTS, parts.len(), parts.as_ptr() as isize);
+        SendMessageW(status, SB_SETTEXTW, 1, zoom_text.as_ptr() as isize);
+        SendMessageW(status, SB_SETTEXTW, 2, eol_text.as_ptr() as isize);
+        SendMessageW(status, SB_SETTEXTW, 3, encoding_text.as_ptr() as isize);
+    }
+    update_status_position(state);
+}
+
+fn update_status_position(state: &AppState) {
+    let editor = state.editor.get();
+    let status = state.status.get();
+    if !state.status_is_visible() || editor.is_null() || status.is_null() {
+        return;
+    }
     let (caret, _) = selection(editor);
     let line = unsafe { SendMessageW(editor, EM_LINEFROMCHAR, caret as usize, 0) } as i32;
     let line_start = unsafe { SendMessageW(editor, EM_LINEINDEX, line as usize, 0) } as i32;
     let column = caret as i32 - line_start.max(0);
-    let mut status_client: RECT = unsafe { zeroed() };
-    unsafe { GetClientRect(status, &mut status_client) };
-    let zoom_width =
-        ((i64::from(STATUS_ZOOM_PART_WIDTH_96_DPI) * i64::from(state.dpi.get()) + 48) / 96) as i32;
-    let parts = [(status_client.right - zoom_width).max(0), -1];
-    unsafe { SendMessageW(status, SB_SETPARTS, parts.len(), parts.as_ptr() as isize) };
     let text = localization::format(
         IDS_STATUS_POSITION,
         &[
@@ -1156,13 +1191,52 @@ fn update_status(state: &AppState) {
         ],
     );
     unsafe { SendMessageW(status, SB_SETTEXTW, 0, text.as_ptr() as isize) };
-    let zoom = localization::format(
-        IDS_STATUS_ZOOM,
-        &[FormatArg::Unsigned(
-            zoom_percent(state.zoom_index.get()) as u64
-        )],
-    );
-    unsafe { SendMessageW(status, SB_SETTEXTW, 1, zoom.as_ptr() as isize) };
+}
+
+fn calculate_status_parts(client_width: i32, right_widths: &[i32]) -> Vec<i32> {
+    if right_widths.is_empty() {
+        return vec![-1];
+    }
+    let client_width = client_width.max(0);
+    let mut parts = Vec::with_capacity(right_widths.len() + 1);
+    let mut remaining_suffix: i32 = right_widths.iter().map(|&w| w.max(0)).sum();
+
+    parts.push((client_width - remaining_suffix).max(0));
+    for &width in &right_widths[..right_widths.len() - 1] {
+        remaining_suffix = remaining_suffix.saturating_sub(width.max(0));
+        parts.push((client_width - remaining_suffix).max(0));
+    }
+    parts.push(-1);
+    parts
+}
+
+fn measure_status_text_width(status: HWND, text: &[u16], dpi: u32) -> i32 {
+    let padding = ((i64::from(16) * i64::from(dpi.max(1)) + 48) / 96) as i32;
+    if status.is_null() || text.is_empty() {
+        return padding;
+    }
+    unsafe {
+        let hdc = GetDC(status);
+        if hdc.is_null() {
+            return padding;
+        }
+        let font = SendMessageW(status, WM_GETFONT, 0, 0) as HFONT;
+        let font = if font.is_null() {
+            GetStockObject(DEFAULT_GUI_FONT) as HFONT
+        } else {
+            font
+        };
+        let old_font = SelectObject(hdc, font);
+        let mut size: SIZE = zeroed();
+        let success = GetTextExtentPoint32W(hdc, text.as_ptr(), text.len() as i32, &mut size);
+        SelectObject(hdc, old_font);
+        ReleaseDC(status, hdc);
+        if success != 0 {
+            size.cx.max(0) + padding
+        } else {
+            padding
+        }
+    }
 }
 
 fn choose_font(state: &AppState) {
@@ -1293,7 +1367,7 @@ fn go_to_line(state: &AppState) {
             SendMessageW(editor, EM_SCROLLCARET, 0, 0);
             SetFocus(editor);
         }
-        update_status(state);
+        update_status_position(state);
     }
 }
 
@@ -1421,7 +1495,7 @@ fn find_next_with_flags(state: &AppState, flags: u32) -> bool {
             SendMessageW(editor, EM_SCROLLCARET, 0, 0);
             SetFocus(editor);
         }
-        update_status(state);
+        update_status_position(state);
         true
     } else {
         let message = localization::format(IDS_FIND_NOT_FOUND, &[FormatArg::Wide(&needle)]);
@@ -1843,5 +1917,35 @@ mod tests {
         assert_eq!(rendered_font_height(1, 96, 10), -1);
         assert_eq!(rendered_font_height(55, 144, 500), -55);
         assert_eq!(rendered_font_height(1234, 120, 250), -514);
+    }
+
+    #[test]
+    fn calculate_status_parts_divides_normal_window_width() {
+        let parts = calculate_status_parts(800, &[72, 120, 100]);
+        assert_eq!(parts, vec![508, 580, 700, -1]);
+    }
+
+    #[test]
+    fn calculate_status_parts_degrades_gracefully_in_narrow_windows() {
+        let parts = calculate_status_parts(200, &[72, 120, 100]);
+        assert_eq!(parts, vec![0, 0, 100, -1]);
+    }
+
+    #[test]
+    fn calculate_status_parts_handles_zero_and_negative_client_widths() {
+        let parts_zero = calculate_status_parts(0, &[72, 120, 100]);
+        assert_eq!(parts_zero, vec![0, 0, 0, -1]);
+
+        let parts_neg = calculate_status_parts(-50, &[72, 120, 100]);
+        assert_eq!(parts_neg, vec![0, 0, 0, -1]);
+    }
+
+    #[test]
+    fn calculate_status_parts_handles_empty_or_single_right_widths() {
+        let parts_empty = calculate_status_parts(800, &[]);
+        assert_eq!(parts_empty, vec![-1]);
+
+        let parts_single = calculate_status_parts(800, &[72]);
+        assert_eq!(parts_single, vec![728, -1]);
     }
 }
