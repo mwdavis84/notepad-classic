@@ -9,6 +9,8 @@ BEGIN
         MENUITEM "保存(&S)\tCtrl+S", ID_FILE_SAVE
         MENUITEM "另存为(&A)...\tCtrl+Shift+S", ID_FILE_SAVE_AS
         MENUITEM SEPARATOR
+        MENUITEM "打印(&P)...\tCtrl+P", ID_FILE_PRINT
+        MENUITEM SEPARATOR
         MENUITEM "退出(&X)", ID_FILE_EXIT
     END
     POPUP "编辑(&E)"
@@ -98,4 +100,7 @@ BEGIN
     IDS_STATUS_ENCODING_UTF8 "UTF-8"
     IDS_STATUS_ENCODING_UTF8_BOM "带 BOM 的 UTF-8"
     IDS_STATUS_ENCODING_UTF16_LE "UTF-16 LE"
+    IDS_PRINT_DIALOG_FAILED "打印对话框失败 (错误 %1)。"
+    IDS_PRINT_JOB_FAILED "无法打印文档:\n\n%1"
+    IDS_PRINT_INIT_FAILED "无法初始化打印机。"
 END

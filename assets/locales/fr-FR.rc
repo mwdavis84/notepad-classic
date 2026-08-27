@@ -9,6 +9,8 @@ BEGIN
         MENUITEM "&Enregistrer\tCtrl+S", ID_FILE_SAVE
         MENUITEM "Enregistrer &sous...\tCtrl+Shift+S", ID_FILE_SAVE_AS
         MENUITEM SEPARATOR
+        MENUITEM "Im&primer...\tCtrl+P", ID_FILE_PRINT
+        MENUITEM SEPARATOR
         MENUITEM "&Quitter", ID_FILE_EXIT
     END
     POPUP "&Édition"
@@ -98,4 +100,7 @@ BEGIN
     IDS_STATUS_ENCODING_UTF8 "UTF-8"
     IDS_STATUS_ENCODING_UTF8_BOM "UTF-8 avec BOM"
     IDS_STATUS_ENCODING_UTF16_LE "UTF-16 LE"
+    IDS_PRINT_DIALOG_FAILED "La boîte de dialogue d'impression a échoué (erreur %1)."
+    IDS_PRINT_JOB_FAILED "Impossible d'imprimer le document :\n\n%1"
+    IDS_PRINT_INIT_FAILED "Impossible d'initialiser l'imprimante."
 END

@@ -9,6 +9,8 @@ BEGIN
         MENUITEM "&Guardar\tCtrl+S", ID_FILE_SAVE
         MENUITEM "Guardar c&omo...\tCtrl+Shift+S", ID_FILE_SAVE_AS
         MENUITEM SEPARATOR
+        MENUITEM "Im&primir...\tCtrl+P", ID_FILE_PRINT
+        MENUITEM SEPARATOR
         MENUITEM "&Salir", ID_FILE_EXIT
     END
     POPUP "&Edición"
@@ -98,4 +100,7 @@ BEGIN
     IDS_STATUS_ENCODING_UTF8 "UTF-8"
     IDS_STATUS_ENCODING_UTF8_BOM "UTF-8 con BOM"
     IDS_STATUS_ENCODING_UTF16_LE "UTF-16 LE"
+    IDS_PRINT_DIALOG_FAILED "Error en el cuadro de diálogo de impresión (error %1)."
+    IDS_PRINT_JOB_FAILED "No se pudo imprimir el documento:\n\n%1"
+    IDS_PRINT_INIT_FAILED "No se puede inicializar la impresora."
 END

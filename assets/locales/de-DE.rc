@@ -9,6 +9,8 @@ BEGIN
         MENUITEM "&Speichern\tCtrl+S", ID_FILE_SAVE
         MENUITEM "Speichern &unter...\tCtrl+Shift+S", ID_FILE_SAVE_AS
         MENUITEM SEPARATOR
+        MENUITEM "&Drucken...\tCtrl+P", ID_FILE_PRINT
+        MENUITEM SEPARATOR
         MENUITEM "&Beenden", ID_FILE_EXIT
     END
     POPUP "&Bearbeiten"
@@ -98,4 +100,7 @@ BEGIN
     IDS_STATUS_ENCODING_UTF8 "UTF-8"
     IDS_STATUS_ENCODING_UTF8_BOM "UTF-8 mit BOM"
     IDS_STATUS_ENCODING_UTF16_LE "UTF-16 LE"
+    IDS_PRINT_DIALOG_FAILED "Fehler im Druckdialog (Fehler %1)."
+    IDS_PRINT_JOB_FAILED "Das Dokument konnte nicht gedruckt werden:\n\n%1"
+    IDS_PRINT_INIT_FAILED "Der Drucker konnte nicht initialisiert werden."
 END
