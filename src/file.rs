@@ -9,11 +9,31 @@ pub enum Encoding {
     Utf16Le,
 }
 
+impl Encoding {
+    pub const fn status_resource_id(self) -> usize {
+        match self {
+            Encoding::Utf8 => crate::localization::ids::IDS_STATUS_ENCODING_UTF8,
+            Encoding::Utf8Bom => crate::localization::ids::IDS_STATUS_ENCODING_UTF8_BOM,
+            Encoding::Utf16Le => crate::localization::ids::IDS_STATUS_ENCODING_UTF16_LE,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Newline {
     CrLf,
     Lf,
     Cr,
+}
+
+impl Newline {
+    pub const fn status_resource_id(self) -> usize {
+        match self {
+            Newline::CrLf => crate::localization::ids::IDS_STATUS_EOL_CRLF,
+            Newline::Lf => crate::localization::ids::IDS_STATUS_EOL_LF,
+            Newline::Cr => crate::localization::ids::IDS_STATUS_EOL_CR,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -325,5 +345,45 @@ mod tests {
         let loaded = decode_with_legacy(&[0x80], deterministic_legacy_decoder).unwrap();
         assert_eq!(loaded.text, "€");
         assert_eq!(loaded.format.encoding, Encoding::Utf8);
+    }
+
+    #[test]
+    fn maps_document_format_state_to_status_resource_ids() {
+        use crate::localization::ids::*;
+
+        assert_eq!(TextFormat::default().newline, Newline::CrLf);
+        assert_eq!(TextFormat::default().encoding, Encoding::Utf8);
+        assert_eq!(Newline::CrLf.status_resource_id(), IDS_STATUS_EOL_CRLF);
+        assert_eq!(Newline::Lf.status_resource_id(), IDS_STATUS_EOL_LF);
+        assert_eq!(Newline::Cr.status_resource_id(), IDS_STATUS_EOL_CR);
+        assert_eq!(
+            Encoding::Utf8.status_resource_id(),
+            IDS_STATUS_ENCODING_UTF8
+        );
+        assert_eq!(
+            Encoding::Utf8Bom.status_resource_id(),
+            IDS_STATUS_ENCODING_UTF8_BOM
+        );
+        assert_eq!(
+            Encoding::Utf16Le.status_resource_id(),
+            IDS_STATUS_ENCODING_UTF16_LE
+        );
+    }
+
+    #[test]
+    fn legacy_ansi_mapping_promotes_to_utf8_status_resource_id() {
+        use crate::localization::ids::*;
+
+        fn deterministic_legacy_decoder(bytes: &[u8]) -> io::Result<String> {
+            assert_eq!(bytes, [0x80]);
+            Ok("€".to_owned())
+        }
+
+        let loaded = decode_with_legacy(&[0x80], deterministic_legacy_decoder).unwrap();
+        assert_eq!(loaded.format.encoding, Encoding::Utf8);
+        assert_eq!(
+            loaded.format.encoding.status_resource_id(),
+            IDS_STATUS_ENCODING_UTF8
+        );
     }
 }
