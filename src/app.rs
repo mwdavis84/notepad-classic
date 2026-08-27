@@ -44,6 +44,7 @@ use crate::file::{self, TextFormat};
 use crate::localization::ids::*;
 use crate::localization::{self, FormatArg};
 use crate::printing;
+use crate::window_placement;
 
 const CLASS_NAME: &[u16] = &[
     b'N' as u16,
@@ -268,8 +269,23 @@ pub fn run() -> Result<(), String> {
         ));
     }
 
+    let show_cmd = match window_placement::load_window_placement() {
+        Some(saved) => {
+            if unsafe { window_placement::apply_window_placement(hwnd, &saved) } {
+                if saved.is_maximized {
+                    SW_SHOWMAXIMIZED
+                } else {
+                    SW_SHOWNORMAL
+                }
+            } else {
+                SW_SHOW
+            }
+        }
+        None => SW_SHOW,
+    };
+
     unsafe {
-        ShowWindow(hwnd, SW_SHOW);
+        ShowWindow(hwnd, show_cmd);
         UpdateWindow(hwnd);
     }
 
@@ -405,6 +421,7 @@ unsafe extern "system" fn window_proc(
         }
         WM_CLOSE => {
             if maybe_save(&state) {
+                window_placement::save_window_placement(hwnd);
                 unsafe { DestroyWindow(hwnd) };
             }
             0

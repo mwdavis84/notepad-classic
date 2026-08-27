@@ -11,6 +11,8 @@ mod localization;
 mod printing;
 #[cfg(test)]
 mod resource_catalog;
+#[cfg(windows)]
+mod window_placement;
 
 #[cfg(windows)]
 fn main() {
