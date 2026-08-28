@@ -29,4 +29,5 @@ target
 *.p12
 *.cer
 target/msix-layout/
+*.patch
 
