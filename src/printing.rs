@@ -12,6 +12,7 @@ use std::io;
 use std::mem::{size_of, zeroed};
 use std::os::windows::ffi::OsStrExt;
 use std::ptr::null;
+use std::sync::Arc;
 
 use windows_sys::Win32::Foundation::{GlobalFree, HWND, SIZE};
 use windows_sys::Win32::Graphics::Gdi::{
@@ -87,9 +88,27 @@ pub struct PageGeometry {
     pub dpi_y: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrintedLine {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct PrintedPage {
-    pub lines: Vec<Vec<u16>>,
+    pub lines: Vec<PrintedLine>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct PaginatedText {
+    text: Arc<Vec<u16>>,
+    pub pages: Vec<PrintedPage>,
+}
+
+impl PaginatedText {
+    pub fn line(&self, line: PrintedLine) -> &[u16] {
+        &self.text[line.start..line.end]
+    }
 }
 
 pub fn query_page_geometry(hdc: HDC) -> PageGeometry {
@@ -126,7 +145,8 @@ pub fn query_page_geometry(hdc: HDC) -> PageGeometry {
     }
 }
 
-pub fn split_logical_lines(text: &[u16]) -> Vec<&[u16]> {
+#[cfg(test)]
+fn split_logical_lines(text: &[u16]) -> Vec<&[u16]> {
     let mut lines = Vec::new();
     let mut start = 0;
     let mut i = 0;
@@ -153,7 +173,8 @@ pub fn split_logical_lines(text: &[u16]) -> Vec<&[u16]> {
     lines
 }
 
-pub fn expand_tabs(line: &[u16]) -> Vec<u16> {
+#[cfg(test)]
+fn expand_tabs(line: &[u16]) -> Vec<u16> {
     let mut result = Vec::with_capacity(line.len());
     let mut col = 0usize;
     for &unit in line {
@@ -169,44 +190,72 @@ pub fn expand_tabs(line: &[u16]) -> Vec<u16> {
     result
 }
 
-pub fn wrap_line<F>(line: &[u16], max_width: i32, measure_width: &F) -> Option<Vec<Vec<u16>>>
+#[cfg(test)]
+fn wrap_line<F>(line: &[u16], max_width: i32, measure_width: &F) -> Option<Vec<Vec<u16>>>
+where
+    F: Fn(&[u16]) -> Option<i32>,
+{
+    let ranges = wrap_line_ranges(line, 0, max_width, measure_width)?;
+    Some(
+        ranges
+            .into_iter()
+            .map(|range| line[range.start..range.end].to_vec())
+            .collect(),
+    )
+}
+
+fn wrap_line_ranges<F>(
+    line: &[u16],
+    base: usize,
+    max_width: i32,
+    measure_width: &F,
+) -> Option<Vec<PrintedLine>>
 where
     F: Fn(&[u16]) -> Option<i32>,
 {
     if line.is_empty() {
-        return Some(vec![Vec::new()]);
+        return Some(vec![PrintedLine {
+            start: base,
+            end: base,
+        }]);
     }
 
     let mut wrapped_lines = Vec::new();
-    let mut remaining = line;
+    let mut offset = 0;
 
-    while !remaining.is_empty() {
+    while offset < line.len() {
+        let remaining = &line[offset..];
         if measure_width(remaining)? <= max_width {
-            wrapped_lines.push(remaining.to_vec());
+            wrapped_lines.push(PrintedLine {
+                start: base + offset,
+                end: base + line.len(),
+            });
             break;
         }
 
         let fit_count = find_fitting_prefix_len(remaining, max_width, measure_width)?;
 
         if fit_count >= remaining.len() {
-            wrapped_lines.push(remaining.to_vec());
+            wrapped_lines.push(PrintedLine {
+                start: base + offset,
+                end: base + line.len(),
+            });
             break;
         }
 
         let break_point = find_whitespace_break(remaining, fit_count);
 
-        let (current_line, next_remaining) = match break_point {
+        let (line_end, next_offset) = match break_point {
             Some(space_idx) => {
                 let mut line_end = space_idx;
                 while line_end > 0 && remaining[line_end - 1] == b' ' as u16 {
                     line_end -= 1;
                 }
-                let line_content = &remaining[..line_end];
                 let mut next_start = space_idx + 1;
                 while next_start < remaining.len() && remaining[next_start] == b' ' as u16 {
                     next_start += 1;
                 }
-                (line_content.to_vec(), &remaining[next_start..])
+                (line_end, offset + next_start)
             }
             None => {
                 let mut count = fit_count.max(1);
@@ -227,16 +276,22 @@ where
                     count = 2;
                 }
                 let count = count.min(remaining.len());
-                (remaining[..count].to_vec(), &remaining[count..])
+                (count, offset + count)
             }
         };
 
-        wrapped_lines.push(current_line);
-        remaining = next_remaining;
+        wrapped_lines.push(PrintedLine {
+            start: base + offset,
+            end: base + offset + line_end,
+        });
+        offset = next_offset;
     }
 
     if wrapped_lines.is_empty() {
-        wrapped_lines.push(Vec::new());
+        wrapped_lines.push(PrintedLine {
+            start: base,
+            end: base,
+        });
     }
 
     Some(wrapped_lines)
@@ -295,54 +350,79 @@ const fn is_low_surrogate(unit: u16) -> bool {
 }
 
 pub fn paginate<F>(
-    text: &[u16],
+    text: Arc<Vec<u16>>,
     max_width: i32,
     lines_per_page: usize,
     measure_width: F,
-) -> Option<Vec<PrintedPage>>
+) -> Option<PaginatedText>
 where
     F: Fn(&[u16]) -> Option<i32>,
 {
-    let logical_lines = split_logical_lines(text);
-    let mut visual_lines = Vec::new();
-
-    for line in logical_lines {
-        let expanded = expand_tabs(line);
-        let wrapped = wrap_line(&expanded, max_width, &measure_width)?;
-        visual_lines.extend(wrapped);
-    }
-
-    if visual_lines.is_empty() {
-        return Some(vec![PrintedPage {
-            lines: vec![Vec::new()],
-        }]);
-    }
-
     let lines_per_page = lines_per_page.max(1);
-    let mut pages = Vec::new();
-
-    for chunk in visual_lines.chunks(lines_per_page) {
-        pages.push(PrintedPage {
-            lines: chunk.to_vec(),
-        });
+    let text = if text.contains(&(b'\t' as u16)) {
+        Arc::new(expand_document_tabs(&text))
+    } else {
+        text
+    };
+    let mut pages = vec![PrintedPage { lines: Vec::new() }];
+    let mut start = 0;
+    let mut index = 0;
+    loop {
+        let at_end = index == text.len();
+        let at_break = !at_end && (text[index] == b'\r' as u16 || text[index] == b'\n' as u16);
+        if at_end || at_break {
+            let wrapped = wrap_line_ranges(&text[start..index], start, max_width, &measure_width)?;
+            for line in wrapped {
+                if pages
+                    .last()
+                    .is_some_and(|page| page.lines.len() == lines_per_page)
+                {
+                    pages.push(PrintedPage { lines: Vec::new() });
+                }
+                pages.last_mut().unwrap().lines.push(line);
+            }
+            if at_end {
+                break;
+            }
+            if text[index] == b'\r' as u16 && text.get(index + 1) == Some(&(b'\n' as u16)) {
+                index += 1;
+            }
+            start = index + 1;
+        }
+        index += 1;
     }
 
-    if pages.is_empty() {
-        pages.push(PrintedPage {
-            lines: vec![Vec::new()],
-        });
-    }
+    Some(PaginatedText { text, pages })
+}
 
-    Some(pages)
+fn expand_document_tabs(text: &[u16]) -> Vec<u16> {
+    let mut result = Vec::with_capacity(text.len());
+    let mut column = 0;
+    for &unit in text {
+        if unit == b'\t' as u16 {
+            let spaces = 8 - (column % 8);
+            result.resize(result.len() + spaces, b' ' as u16);
+            column += spaces;
+        } else {
+            result.push(unit);
+            if unit == b'\r' as u16 || unit == b'\n' as u16 {
+                column = 0;
+            } else {
+                column += 1;
+            }
+        }
+    }
+    result
 }
 
 pub fn print(
     owner: HWND,
-    text: &[u16],
+    text: Vec<u16>,
     font_choice: FontChoice,
     display_name: &OsStr,
 ) -> Result<(), String> {
-    match modern::show_print_ui(owner, text, font_choice, display_name) {
+    let text = Arc::new(text);
+    match modern::show_print_ui(owner, Arc::clone(&text), font_choice, display_name) {
         Ok(()) => return Ok(()),
         Err(modern::ModernPrintError::Unavailable) => {}
         Err(modern::ModernPrintError::Failed(_error)) => {
@@ -360,7 +440,7 @@ pub fn shutdown() {
 
 fn legacy_print(
     owner: HWND,
-    text: &[u16],
+    text: Arc<Vec<u16>>,
     font_choice: FontChoice,
     display_name: &OsStr,
 ) -> Result<(), String> {
@@ -418,7 +498,7 @@ fn legacy_print(
 
 fn render_print_job(
     hdc: HDC,
-    text: &[u16],
+    text: Arc<Vec<u16>>,
     font_choice: FontChoice,
     display_name: &OsStr,
 ) -> Result<(), String> {
@@ -463,7 +543,8 @@ fn render_print_job(
         if ok != 0 { Some(size.cx.max(0)) } else { None }
     };
 
-    let Some(pages) = paginate(text, geometry.content_width, lines_per_page, measure_width) else {
+    let Some(document) = paginate(text, geometry.content_width, lines_per_page, measure_width)
+    else {
         unsafe {
             SelectObject(hdc, previous_font);
             DeleteObject(printer_font);
@@ -500,13 +581,14 @@ fn render_print_job(
 
     let mut page_failure: Option<PageFailure> = None;
 
-    for page in &pages {
+    for page in &document.pages {
         if unsafe { StartPage(hdc) } <= 0 {
             page_failure = Some(PageFailure::StartPage(io::Error::last_os_error()));
             break;
         }
 
         for (line_idx, line) in page.lines.iter().enumerate() {
+            let line = document.line(*line);
             if line.is_empty() {
                 continue;
             }
@@ -587,31 +669,39 @@ fn localized_error(id: usize, detail: impl std::fmt::Display) -> String {
 mod tests {
     use super::*;
 
+    fn page_strings(document: &PaginatedText, page_index: usize) -> Vec<String> {
+        document.pages[page_index]
+            .lines
+            .iter()
+            .map(|line| String::from_utf16_lossy(document.line(*line)))
+            .collect()
+    }
+
     #[test]
     fn empty_text_paginates_to_single_page() {
-        let pages = paginate(&[], 100, 10, |_| Some(10)).unwrap();
-        assert_eq!(pages.len(), 1);
-        assert_eq!(pages[0].lines, vec![Vec::<u16>::new()]);
+        let document = paginate(Arc::new(Vec::new()), 100, 10, |_| Some(10)).unwrap();
+        assert_eq!(document.pages.len(), 1);
+        assert!(document.line(document.pages[0].lines[0]).is_empty());
     }
 
     #[test]
     fn short_line_fits_on_one_page() {
         let text: Vec<u16> = "Hello".encode_utf16().collect();
-        let pages = paginate(&text, 100, 10, |s| Some(s.len() as i32 * 10)).unwrap();
-        assert_eq!(pages.len(), 1);
-        assert_eq!(pages[0].lines.len(), 1);
-        assert_eq!(pages[0].lines[0], text);
+        let document = paginate(Arc::new(text.clone()), 100, 10, |s| {
+            Some(s.len() as i32 * 10)
+        })
+        .unwrap();
+        assert_eq!(document.pages.len(), 1);
+        assert_eq!(document.pages[0].lines.len(), 1);
+        assert_eq!(document.line(document.pages[0].lines[0]), text);
     }
 
     #[test]
     fn explicit_blank_lines_are_preserved() {
         let text: Vec<u16> = "Line 1\r\n\r\nLine 2".encode_utf16().collect();
-        let pages = paginate(&text, 200, 10, |s| Some(s.len() as i32 * 10)).unwrap();
-        assert_eq!(pages.len(), 1);
-        assert_eq!(pages[0].lines.len(), 3);
-        assert_eq!(String::from_utf16_lossy(&pages[0].lines[0]), "Line 1");
-        assert_eq!(pages[0].lines[1], Vec::<u16>::new());
-        assert_eq!(String::from_utf16_lossy(&pages[0].lines[2]), "Line 2");
+        let document = paginate(Arc::new(text), 200, 10, |s| Some(s.len() as i32 * 10)).unwrap();
+        assert_eq!(document.pages.len(), 1);
+        assert_eq!(page_strings(&document, 0), ["Line 1", "", "Line 2"]);
     }
 
     #[test]
@@ -629,28 +719,18 @@ mod tests {
     fn narrow_width_causes_word_wrapping_at_whitespace() {
         let text: Vec<u16> = "hello world foo bar".encode_utf16().collect();
         // Each char is 10 units. max_width is 60 units -> fits 6 chars ("hello ").
-        let pages = paginate(&text, 60, 10, |s| Some(s.len() as i32 * 10)).unwrap();
-        assert_eq!(pages.len(), 1);
-        let line_strings: Vec<String> = pages[0]
-            .lines
-            .iter()
-            .map(|l| String::from_utf16_lossy(l))
-            .collect();
-        assert_eq!(line_strings, vec!["hello", "world", "foo", "bar"]);
+        let document = paginate(Arc::new(text), 60, 10, |s| Some(s.len() as i32 * 10)).unwrap();
+        assert_eq!(document.pages.len(), 1);
+        assert_eq!(page_strings(&document, 0), ["hello", "world", "foo", "bar"]);
     }
 
     #[test]
     fn unbroken_token_hard_breaks_and_makes_forward_progress() {
         let text: Vec<u16> = "abcdefghijkl".encode_utf16().collect();
         // Each char 10 units, max_width 40 units -> fits 4 chars.
-        let pages = paginate(&text, 40, 10, |s| Some(s.len() as i32 * 10)).unwrap();
-        assert_eq!(pages.len(), 1);
-        let line_strings: Vec<String> = pages[0]
-            .lines
-            .iter()
-            .map(|l| String::from_utf16_lossy(l))
-            .collect();
-        assert_eq!(line_strings, vec!["abcd", "efgh", "ijkl"]);
+        let document = paginate(Arc::new(text), 40, 10, |s| Some(s.len() as i32 * 10)).unwrap();
+        assert_eq!(document.pages.len(), 1);
+        assert_eq!(page_strings(&document, 0), ["abcd", "efgh", "ijkl"]);
     }
 
     #[test]
@@ -660,9 +740,10 @@ mod tests {
         assert_eq!(text.len(), 6);
         // Each code unit is 10 units. If max_width is 30, it could try to fit 3 code units.
         // It must not split the 2nd surrogate pair!
-        let pages = paginate(&text, 30, 10, |s| Some(s.len() as i32 * 10)).unwrap();
-        assert_eq!(pages.len(), 1);
-        for line in &pages[0].lines {
+        let document = paginate(Arc::new(text), 30, 10, |s| Some(s.len() as i32 * 10)).unwrap();
+        assert_eq!(document.pages.len(), 1);
+        for line in &document.pages[0].lines {
+            let line = document.line(*line);
             // Every line must contain an even number of code units (intact surrogate pairs)
             assert_eq!(line.len() % 2, 0);
             assert!(line.len() <= 2);
@@ -682,11 +763,14 @@ mod tests {
     fn multi_page_pagination_splits_lines_across_pages() {
         let text: Vec<u16> = "1\n2\n3\n4\n5".encode_utf16().collect();
         // lines_per_page = 2 -> 3 pages: [1, 2], [3, 4], [5]
-        let pages = paginate(&text, 100, 2, |s| Some(s.len() as i32 * 10)).unwrap();
-        assert_eq!(pages.len(), 3);
-        assert_eq!(pages[0].lines.len(), 2);
-        assert_eq!(pages[1].lines.len(), 2);
-        assert_eq!(pages[2].lines.len(), 1);
+        let document = paginate(Arc::new(text), 100, 2, |s| Some(s.len() as i32 * 10)).unwrap();
+        assert_eq!(document.pages.len(), 3);
+        assert_eq!(document.pages[0].lines.len(), 2);
+        assert_eq!(document.pages[1].lines.len(), 2);
+        assert_eq!(document.pages[2].lines.len(), 1);
+        assert_eq!(page_strings(&document, 0), ["1", "2"]);
+        assert_eq!(page_strings(&document, 1), ["3", "4"]);
+        assert_eq!(page_strings(&document, 2), ["5"]);
     }
 
     #[test]
@@ -743,7 +827,14 @@ mod tests {
     #[test]
     fn measurement_failure_propagates_as_none() {
         let text: Vec<u16> = "Hello world".encode_utf16().collect();
-        let result = paginate(&text, 100, 10, |_| None);
+        let result = paginate(Arc::new(text), 100, 10, |_| None);
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn paginated_lines_share_one_backing_buffer_and_expand_tabs_once() {
+        let text: Vec<u16> = "a\tb\nplain".encode_utf16().collect();
+        let document = paginate(Arc::new(text), 200, 10, |s| Some(s.len() as i32 * 10)).unwrap();
+        assert_eq!(page_strings(&document, 0), ["a       b", "plain"]);
     }
 }
