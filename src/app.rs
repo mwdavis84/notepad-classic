@@ -855,7 +855,7 @@ fn print_document(state: &AppState) {
     let text = get_editor_text_utf16(state.editor.get());
     let font_choice = state.font_choice.get();
     let display_name = state.display_name();
-    if let Err(message) = printing::print(hwnd, &text, font_choice, &display_name) {
+    if let Err(message) = printing::print(hwnd, text, font_choice, &display_name) {
         dialogs::show_error(Some(hwnd), &app_name(), &message);
     }
 }
@@ -911,16 +911,16 @@ fn open_path(state: &AppState, path: PathBuf) {
             let appended_log_entry = is_log_document(&text)
                 && current_time_date()
                     .is_some_and(|timestamp| append_log_entry(&mut text, &timestamp));
-            set_editor_text(state, &text);
+            let text_len = text.len();
+            set_editor_text_utf16(state, text);
             *state.path.borrow_mut() = Some(path);
             state.format.set(loaded.format);
             state.dirty.set(appended_log_entry);
             if appended_log_entry {
-                let end = text.encode_utf16().count();
                 unsafe {
                     let editor = state.editor.get();
                     SendMessageW(editor, EM_SETMODIFY, 1, 0);
-                    SendMessageW(editor, EM_SETSEL, end, end as isize);
+                    SendMessageW(editor, EM_SETSEL, text_len, text_len as isize);
                     SendMessageW(editor, EM_SCROLLCARET, 0, 0);
                 }
             }
@@ -959,8 +959,7 @@ fn save_document(state: &AppState, force_dialog: bool) -> bool {
             }
         }
     };
-    let text = get_editor_text(state.editor.get());
-    match file::save(&path, &text, state.format.get()) {
+    match save_editor_contents(state, &path) {
         Ok(()) => {
             *state.path.borrow_mut() = Some(path);
             state.dirty.set(false);
@@ -978,6 +977,15 @@ fn save_document(state: &AppState, force_dialog: bool) -> bool {
     }
 }
 
+fn save_editor_contents(state: &AppState, path: &Path) -> io::Result<()> {
+    save_edit_control(state.editor.get(), path, state.format.get())
+}
+
+fn save_edit_control(editor: HWND, path: &Path, format: TextFormat) -> io::Result<()> {
+    let text = get_editor_text_utf16(editor);
+    file::save(path, &text, format)
+}
+
 fn maybe_save(state: &AppState) -> bool {
     if !state.dirty.get() {
         return true;
@@ -992,26 +1000,20 @@ fn maybe_save(state: &AppState) -> bool {
 
 fn set_editor_text(state: &AppState, text: &str) {
     let wide: Vec<u16> = text.encode_utf16().collect();
-    set_editor_text_utf16(state, &wide);
+    set_editor_text_utf16(state, wide);
 }
 
-fn set_editor_text_utf16(state: &AppState, text: &[u16]) {
-    let mut terminated = Vec::with_capacity(text.len() + 1);
-    terminated.extend_from_slice(text);
-    terminated.push(0);
+fn set_editor_text_utf16(state: &AppState, mut text: Vec<u16>) {
+    text.push(0);
     let editor = state.editor.get();
     state.suppress_change.set(true);
     unsafe {
-        SetWindowTextW(editor, terminated.as_ptr());
+        SetWindowTextW(editor, text.as_ptr());
         SendMessageW(editor, EM_SETMODIFY, 0, 0);
         SendMessageW(editor, EM_SETSEL, 0, 0);
     }
     state.suppress_change.set(false);
     update_status(state);
-}
-
-fn get_editor_text(editor: HWND) -> String {
-    String::from_utf16_lossy(&get_editor_text_utf16(editor))
 }
 
 fn get_editor_text_utf16(editor: HWND) -> Vec<u16> {
@@ -1355,21 +1357,23 @@ fn current_time_date() -> Option<String> {
     }
 }
 
-fn append_log_entry(text: &mut String, timestamp: &str) -> bool {
+fn append_log_entry(text: &mut Vec<u16>, timestamp: &str) -> bool {
     if !is_log_document(text) {
         return false;
     }
-    if !text.ends_with('\r') && !text.ends_with('\n') {
-        text.push_str("\r\n");
+    if !text.ends_with(&[b'\r' as u16]) && !text.ends_with(&[b'\n' as u16]) {
+        text.extend_from_slice(&[b'\r' as u16, b'\n' as u16]);
     }
-    text.push_str(timestamp);
-    text.push_str("\r\n");
+    text.extend(timestamp.encode_utf16());
+    text.extend_from_slice(&[b'\r' as u16, b'\n' as u16]);
     true
 }
 
-fn is_log_document(text: &str) -> bool {
-    text.strip_prefix(".LOG")
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with('\r') || rest.starts_with('\n'))
+fn is_log_document(text: &[u16]) -> bool {
+    const MARKER: &[u16] = &[b'.' as u16, b'L' as u16, b'O' as u16, b'G' as u16];
+    text.strip_prefix(MARKER).is_some_and(|rest| {
+        rest.is_empty() || rest.starts_with(&[b'\r' as u16]) || rest.starts_with(&[b'\n' as u16])
+    })
 }
 
 fn replace_selection(editor: HWND, text: &str) {
@@ -1583,7 +1587,7 @@ fn replace_all(state: &AppState, flags: u32) {
     let input = get_editor_text_utf16(editor);
     let (output, count) = replace_all_utf16(&input, &needle, &replacement, flags);
     if count > 0 {
-        set_editor_text_utf16(state, &output);
+        set_editor_text_utf16(state, output);
         state.dirty.set(true);
         unsafe { SendMessageW(editor, EM_SETMODIFY, 1, 0) };
         state.set_title();
@@ -1737,6 +1741,118 @@ fn nul_terminated_slice(buffer: &[u16]) -> &[u16] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_SAVE_TEST: AtomicUsize = AtomicUsize::new(0);
+
+    struct TestEditor {
+        editor: HWND,
+        parent: HWND,
+    }
+
+    impl TestEditor {
+        fn new() -> Self {
+            let static_class = dialogs::to_wide("STATIC");
+            let parent = unsafe {
+                CreateWindowExW(
+                    0,
+                    static_class.as_ptr(),
+                    null(),
+                    WS_POPUP,
+                    0,
+                    0,
+                    0,
+                    0,
+                    null_mut(),
+                    null_mut(),
+                    null_mut(),
+                    null_mut(),
+                )
+            };
+            assert!(!parent.is_null(), "hidden parent window must be created");
+
+            let edit_class = dialogs::to_wide("EDIT");
+            let editor = unsafe {
+                CreateWindowExW(
+                    0,
+                    edit_class.as_ptr(),
+                    null(),
+                    WS_CHILD | ES_MULTILINE as u32 | ES_AUTOHSCROLL as u32,
+                    0,
+                    0,
+                    0,
+                    0,
+                    parent,
+                    null_mut(),
+                    null_mut(),
+                    null_mut(),
+                )
+            };
+            assert!(!editor.is_null(), "hidden EDIT control must be created");
+            unsafe { SendMessageW(editor, EM_SETLIMITTEXT, 0x7FFF_FFFE, 0) };
+            Self { editor, parent }
+        }
+
+        fn set_text(&self, text: &str) {
+            let mut wide: Vec<u16> = text.encode_utf16().collect();
+            wide.push(0);
+            assert_ne!(unsafe { SetWindowTextW(self.editor, wide.as_ptr()) }, 0);
+        }
+
+        fn append(&self, text: &str) {
+            let length = unsafe { GetWindowTextLengthW(self.editor) };
+            unsafe { SendMessageW(self.editor, EM_SETSEL, length as usize, length as isize) };
+            let mut wide: Vec<u16> = text.encode_utf16().collect();
+            wide.push(0);
+            unsafe { SendMessageW(self.editor, EM_REPLACESEL, 1, wide.as_ptr() as isize) };
+        }
+    }
+
+    impl Drop for TestEditor {
+        fn drop(&mut self) {
+            unsafe {
+                DestroyWindow(self.editor);
+                DestroyWindow(self.parent);
+            }
+        }
+    }
+
+    fn save_test_path(name: &str) -> PathBuf {
+        let sequence = NEXT_SAVE_TEST.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "notepad-classic-app-{name}-{}-{sequence}.tmp",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn failed_save_leaves_the_edit_control_usable_for_a_successful_retry() {
+        let editor = TestEditor::new();
+        editor.set_text("before");
+        let missing_parent = save_test_path("missing-parent");
+        let failed_path = missing_parent.join("document.txt");
+        assert!(save_edit_control(editor.editor, &failed_path, TextFormat::default()).is_err());
+
+        editor.append(" café 😀 after");
+        let retry_path = save_test_path("retry");
+        save_edit_control(editor.editor, &retry_path, TextFormat::default()).unwrap();
+        assert_eq!(
+            std::fs::read(&retry_path).unwrap(),
+            "before café 😀 after".as_bytes()
+        );
+        std::fs::remove_file(retry_path).unwrap();
+    }
+
+    #[test]
+    fn large_document_save_uses_the_edit_control_snapshot_path() {
+        const SIZE: usize = 1024 * 1024;
+        let editor = TestEditor::new();
+        editor.set_text(&"x".repeat(SIZE));
+        let path = save_test_path("large");
+        save_edit_control(editor.editor, &path, TextFormat::default()).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), SIZE as u64);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn finds_forward_and_backward_in_utf16_offsets() {
@@ -1777,21 +1893,33 @@ mod tests {
 
     #[test]
     fn log_entry_is_appended_only_to_dot_log_documents() {
-        let mut log = ".LOG\r\nfirst entry".to_owned();
+        let mut log: Vec<u16> = ".LOG\r\nfirst entry".encode_utf16().collect();
         assert!(append_log_entry(&mut log, "10:30 AM 8/26/2026"));
-        assert_eq!(log, ".LOG\r\nfirst entry\r\n10:30 AM 8/26/2026\r\n");
+        assert_eq!(
+            String::from_utf16_lossy(&log),
+            ".LOG\r\nfirst entry\r\n10:30 AM 8/26/2026\r\n"
+        );
 
-        let mut ordinary = "ordinary text".to_owned();
+        let mut ordinary: Vec<u16> = "ordinary text".encode_utf16().collect();
         assert!(!append_log_entry(&mut ordinary, "ignored"));
-        assert_eq!(ordinary, "ordinary text");
+        assert_eq!(String::from_utf16_lossy(&ordinary), "ordinary text");
 
-        let mut marker_only = ".LOG".to_owned();
+        let mut marker_only: Vec<u16> = ".LOG".encode_utf16().collect();
         assert!(append_log_entry(&mut marker_only, "10:30 AM 8/26/2026"));
-        assert_eq!(marker_only, ".LOG\r\n10:30 AM 8/26/2026\r\n");
+        assert_eq!(
+            String::from_utf16_lossy(&marker_only),
+            ".LOG\r\n10:30 AM 8/26/2026\r\n"
+        );
 
-        assert!(is_log_document(".LOG\n"));
-        assert!(is_log_document(".LOG\r"));
-        assert!(!is_log_document(".LOGGER"));
+        assert!(is_log_document(
+            &".LOG\n".encode_utf16().collect::<Vec<_>>()
+        ));
+        assert!(is_log_document(
+            &".LOG\r".encode_utf16().collect::<Vec<_>>()
+        ));
+        assert!(!is_log_document(
+            &".LOGGER".encode_utf16().collect::<Vec<_>>()
+        ));
     }
 
     #[test]
