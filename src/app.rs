@@ -19,6 +19,7 @@ use windows_sys::Win32::Graphics::Gdi::{
     GetTextExtentPoint32W, HFONT, LOGFONTW, ReleaseDC, SelectObject, UpdateWindow,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::Memory::{LocalLock, LocalUnlock};
 use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 use windows_sys::Win32::System::SystemServices::{MK_CONTROL, MK_LBUTTON};
 use windows_sys::Win32::UI::Controls::Dialogs::{
@@ -26,7 +27,8 @@ use windows_sys::Win32::UI::Controls::Dialogs::{
     FR_REPLACEALL, FR_WHOLEWORD, FindTextW, ReplaceTextW,
 };
 use windows_sys::Win32::UI::Controls::{
-    EM_GETLINECOUNT, EM_GETSEL, EM_LINEFROMCHAR, EM_LINEINDEX, EM_REPLACESEL, EM_SCROLLCARET,
+    EM_GETHANDLE, EM_GETLINECOUNT, EM_GETSEL, EM_LINEFROMCHAR, EM_LINEINDEX, EM_REPLACESEL,
+    EM_SCROLLCARET,
     EM_SETLIMITTEXT, EM_SETMODIFY, EM_SETSEL, ICC_BAR_CLASSES, ICC_LINK_CLASS,
     INITCOMMONCONTROLSEX, InitCommonControlsEx, SB_SETPARTS, SB_SETTEXTW, STATUSCLASSNAMEW,
 };
@@ -982,6 +984,25 @@ fn save_editor_contents(state: &AppState, path: &Path) -> io::Result<()> {
 }
 
 fn save_edit_control(editor: HWND, path: &Path, format: TextFormat) -> io::Result<()> {
+    let length = unsafe { GetWindowTextLengthW(editor) };
+    if length <= 0 {
+        return file::save(path, &[], format);
+    }
+
+    let handle = unsafe { SendMessageW(editor, EM_GETHANDLE, 0, 0) } as *mut c_void;
+    if !handle.is_null() {
+        let text = unsafe { LocalLock(handle) } as *const u16;
+        if !text.is_null() {
+            // SAFETY: EM_GETHANDLE returns the standard multiline EDIT's
+            // NUL-terminated UTF-16 buffer. The control receives no messages
+            // until LocalUnlock, so the buffer cannot move while it is read.
+            let text = unsafe { std::slice::from_raw_parts(text, length as usize) };
+            let result = file::save(path, text, format);
+            unsafe { LocalUnlock(handle) };
+            return result;
+        }
+    }
+
     let text = get_editor_text_utf16(editor);
     file::save(path, &text, format)
 }
