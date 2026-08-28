@@ -1,9 +1,11 @@
-//! Native Win32 printing implementation for Notepad Classic.
+//! Native Windows printing implementation for Notepad Classic.
 //!
-//! Provides standard Windows Print dialog (`PrintDlgW`) interaction and native
-//! GDI page rendering (`StartDocW`, `StartPage`, `EndPage`, `EndDoc`).
-//! Printing uses the logical unzoomed font choice and the selected printer's
-//! actual DC metrics.
+//! The primary path uses `Windows.Graphics.Printing` so the system print UI can
+//! request pagination, preview surfaces, and the final document. The proven
+//! `PrintDlgW`/GDI implementation remains as a fallback when that API is not
+//! available. Both paths use the logical unzoomed font choice.
+
+mod modern;
 
 use std::ffi::OsStr;
 use std::io;
@@ -21,10 +23,38 @@ use windows_sys::Win32::UI::Controls::Dialogs::{
     CommDlgExtendedError, PD_HIDEPRINTTOFILE, PD_NOPAGENUMS, PD_NOSELECTION, PD_RETURNDC,
     PD_USEDEVMODECOPIESANDCOLLATE, PRINTDLGW, PrintDlgW,
 };
+use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
 use crate::app::{FontChoice, rendered_font_height};
+use crate::dialogs;
 use crate::localization::ids::*;
 use crate::localization::{self, FormatArg};
+
+pub(crate) const WM_APP_PRINT_FAILURE: u32 = WM_APP + 2;
+
+#[derive(Clone, Copy)]
+pub(super) enum AsyncPrintFailure {
+    Initialization = 1,
+    Rendering = 2,
+}
+
+pub(super) fn post_async_failure(owner: HWND, failure: AsyncPrintFailure) {
+    unsafe {
+        PostMessageW(owner, WM_APP_PRINT_FAILURE, failure as usize, 0);
+    }
+}
+
+pub(crate) fn show_async_failure(owner: HWND, failure: usize) {
+    let message = if failure == AsyncPrintFailure::Rendering as usize {
+        localized_error(
+            IDS_PRINT_JOB_FAILED,
+            localized_string(IDS_PRINT_RENDER_FAILED),
+        )
+    } else {
+        localized_string(IDS_PRINT_INIT_FAILED)
+    };
+    dialogs::show_error(Some(owner), &localized_string(IDS_APP_NAME), &message);
+}
 
 #[repr(C)]
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
@@ -307,6 +337,28 @@ where
 }
 
 pub fn print(
+    owner: HWND,
+    text: &[u16],
+    font_choice: FontChoice,
+    display_name: &OsStr,
+) -> Result<(), String> {
+    match modern::show_print_ui(owner, text, font_choice, display_name) {
+        Ok(()) => return Ok(()),
+        Err(modern::ModernPrintError::Unavailable) => {}
+        Err(modern::ModernPrintError::Failed(_error)) => {
+            return Err(localized_string(IDS_PRINT_INIT_FAILED));
+        }
+    }
+
+    legacy_print(owner, text, font_choice, display_name)
+}
+
+/// Balances a deferred WinRT initialization on the application UI thread.
+pub fn shutdown() {
+    modern::shutdown();
+}
+
+fn legacy_print(
     owner: HWND,
     text: &[u16],
     font_choice: FontChoice,

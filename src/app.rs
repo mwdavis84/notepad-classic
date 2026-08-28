@@ -176,6 +176,14 @@ impl AppState {
 }
 
 pub fn run() -> Result<(), String> {
+    struct PrintingRuntimeGuard;
+    impl Drop for PrintingRuntimeGuard {
+        fn drop(&mut self) {
+            printing::shutdown();
+        }
+    }
+    let _printing_runtime = PrintingRuntimeGuard;
+
     unsafe {
         // Failure only means an older Windows DPI mode remains in effect.
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -428,6 +436,10 @@ unsafe extern "system" fn window_proc(
         }
         WM_APP_UPDATE_STATUS => {
             update_status_position(&state);
+            0
+        }
+        printing::WM_APP_PRINT_FAILURE => {
+            printing::show_async_failure(hwnd, wparam);
             0
         }
         WM_DESTROY => {

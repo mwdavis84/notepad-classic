@@ -7,6 +7,27 @@ description = "A tiny native Win32 text editor"
 license = "MIT"
 
 [dependencies]
+windows = { version = "0.62.2", default-features = false, features = [
+    "Foundation",
+    "Graphics_Printing",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Imaging",
+    "Win32_Graphics_Printing",
+    "Win32_Storage_Xps_Printing",
+    "Win32_System_Com",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Printing",
+] }
+windows-core = { version = "0.62.2", default-features = false }
+windows-future = { version = "0.3.2", default-features = false }
+windows-numerics = { version = "0.3.1", default-features = false }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",

@@ -3,6 +3,7 @@
 #include "resource.h"
 
 IDI_APP_ICON ICON "notepad-classic.ico"
+1 24 "../notepad-classic.manifest"
 #include "locales/en-US.rc"
 #include "locales/es-ES.rc"
 #include "locales/de-DE.rc"
