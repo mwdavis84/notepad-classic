@@ -438,6 +438,10 @@ unsafe extern "system" fn window_proc(
             update_status_position(&state);
             0
         }
+        printing::WM_APP_PRINT_FAILURE => {
+            printing::show_async_failure(hwnd, wparam);
+            0
+        }
         WM_DESTROY => {
             let find_dialog = state.find_dialog.replace(null_mut());
             if !find_dialog.is_null() {

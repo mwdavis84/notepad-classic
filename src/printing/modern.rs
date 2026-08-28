@@ -7,9 +7,9 @@
 //! application state is borrowed while the print UI is reentrant.
 
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::ffi::OsStr;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 use windows::Foundation::TypedEventHandler;
 use windows::Graphics::Printing::{
@@ -19,7 +19,8 @@ use windows::Graphics::Printing::{
     StandardPrintTaskOptions,
 };
 use windows::Win32::Foundation::{
-    E_FAIL, E_INVALIDARG, E_NOINTERFACE, HWND as WindowsHwnd, REGDB_E_CLASSNOTREG,
+    E_FAIL, E_INVALIDARG, E_NOINTERFACE, E_NOTIMPL, ERROR_NOT_SUPPORTED, HWND as WindowsHwnd,
+    REGDB_E_CLASSNOTREG, RO_E_METADATA_NAME_NOT_FOUND,
 };
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D_SIZE_F, D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
@@ -54,17 +55,20 @@ use windows::Win32::System::WinRT::Printing::{
 use windows::Win32::System::WinRT::{
     RO_INIT_SINGLETHREADED, RoGetActivationFactory, RoInitialize, RoUninitialize,
 };
-use windows::core::{Error, HSTRING, Interface, PCWSTR, Ref, Result as WindowsResult};
-use windows_core::IUnknownImpl;
-use windows_future::{AsyncOperationCompletedHandler, AsyncStatus, IAsyncOperation};
-use windows_numerics::Vector2;
+use windows::core::{
+    AgileReference, Error, HRESULT, HSTRING, IUnknownImpl, Interface, PCWSTR, Ref,
+    Result as WindowsResult,
+};
+use windows_future::IAsyncOperation;
+use windows_numerics::{Matrix3x2, Vector2};
 use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+use windows_sys::Win32::System::SystemServices::LOCALE_NAME_MAX_LENGTH;
+use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 
 use crate::app::FontChoice;
-use crate::dialogs;
-use crate::localization::ids::{IDS_APP_NAME, IDS_PRINT_JOB_FAILED, IDS_PRINT_RENDER_FAILED};
 
-use super::{PrintedPage, localized_error, localized_string, paginate};
+use super::{AsyncPrintFailure, PrintedPage, paginate, post_async_failure};
 
 const PRINT_MANAGER_CLASS: &str = "Windows.Graphics.Printing.PrintManager";
 const JOB_PAGE_APPLICATION_DEFINED: u32 = u32::MAX;
@@ -77,6 +81,9 @@ thread_local! {
     static WINRT_INITIALIZED: Cell<bool> = const { Cell::new(false) };
 }
 
+static ACTIVE_PRINT_WINDOWS: LazyLock<Mutex<HashSet<isize>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
 #[derive(Debug)]
 pub(super) enum ModernPrintError {
     Unavailable,
@@ -88,6 +95,7 @@ struct DocumentSnapshot {
     text: Vec<u16>,
     font: FontChoice,
     display_name: String,
+    preview_dpi: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,14 +122,13 @@ struct GraphicsResources {
     d2d_device: ID2D1Device,
     dwrite_factory: IDWriteFactory,
     text_format: IDWriteTextFormat,
-    wic_factory: IWICImagingFactory,
     underline: bool,
     strikeout: bool,
 }
 
 struct DocumentState {
-    preview_target: Option<IPrintPreviewDxgiPackageTarget>,
-    graphics: Option<Rc<GraphicsResources>>,
+    preview_target: Option<AgileReference<IPrintPreviewDxgiPackageTarget>>,
+    graphics: Option<Arc<GraphicsResources>>,
     layout: Option<PrintLayout>,
 }
 
@@ -151,11 +158,11 @@ impl DocumentSource {
         self.state.lock().map_err(|_| Error::from_hresult(E_FAIL))
     }
 
-    fn ensure_graphics(&self, state: &mut DocumentState) -> WindowsResult<Rc<GraphicsResources>> {
+    fn ensure_graphics(&self, state: &mut DocumentState) -> WindowsResult<Arc<GraphicsResources>> {
         if state.graphics.is_none() {
-            state.graphics = Some(Rc::new(GraphicsResources::new(self.snapshot.font)?));
+            state.graphics = Some(Arc::new(GraphicsResources::new(self.snapshot.font)?));
         }
-        Ok(Rc::clone(
+        Ok(Arc::clone(
             state.graphics.as_ref().expect("graphics was initialized"),
         ))
     }
@@ -165,6 +172,10 @@ impl DocumentSource {
         options: &windows::core::IInspectable,
     ) -> WindowsResult<PrintLayout> {
         let options: IPrintTaskOptionsCore = options.cast()?;
+        // This document uses one uniform layout for every page. Page zero is
+        // the generic description used by Microsoft's current Printing sample;
+        // per-page descriptions are unnecessary until page-specific tickets or
+        // layouts are supported here.
         let description = options.GetPageDescription(0)?;
         let graphics = {
             let mut state = self.state()?;
@@ -187,7 +198,7 @@ impl IPrintDocumentPageSource_Impl for DocumentSource_Impl {
                 &IPrintPreviewDxgiPackageTarget::IID,
             )?
         };
-        self.state()?.preview_target = Some(preview);
+        self.state()?.preview_target = Some(AgileReference::new(&preview)?);
         Ok(self.to_interface())
     }
 
@@ -222,8 +233,9 @@ impl IPrintPreviewPageCollection_Impl for DocumentSource_Impl {
             state.layout = Some(layout.clone());
             state
                 .preview_target
-                .clone()
+                .as_ref()
                 .ok_or_else(|| Error::from_hresult(E_FAIL))?
+                .resolve()?
         };
         unsafe {
             preview.InvalidatePreview()?;
@@ -250,15 +262,23 @@ impl IPrintPreviewPageCollection_Impl for DocumentSource_Impl {
                 .ok_or_else(|| Error::from_hresult(E_FAIL))?;
             let preview = state
                 .preview_target
-                .clone()
+                .as_ref()
                 .ok_or_else(|| Error::from_hresult(E_FAIL))?;
+            let preview = preview.resolve()?;
             let graphics = self.ensure_graphics(&mut state)?;
             (layout, preview, graphics)
         };
         if page_number == 0 || page_number as usize > layout.pages.len() {
             return Err(Error::from_hresult(E_INVALIDARG));
         }
-        graphics.draw_preview(&preview, &layout, page_number, width, height)
+        graphics.draw_preview(
+            &preview,
+            &layout,
+            page_number,
+            width,
+            height,
+            self.snapshot.preview_dpi,
+        )
     }
 }
 
@@ -270,20 +290,11 @@ impl GraphicsResources {
         let dwrite_factory: IDWriteFactory =
             unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
         let text_format = create_text_format(&dwrite_factory, font)?;
-        let wic_factory: IWICImagingFactory = unsafe {
-            CoCreateInstance(
-                &CLSID_WICImagingFactory,
-                None::<&windows::core::IUnknown>,
-                CLSCTX_INPROC_SERVER,
-            )?
-        };
-
         Ok(Self {
             d3d_device,
             d2d_device,
             dwrite_factory,
             text_format,
-            wic_factory,
             underline: font.logical.lfUnderline != 0,
             strikeout: font.logical.lfStrikeOut != 0,
         })
@@ -390,13 +401,15 @@ impl GraphicsResources {
         page_number: u32,
         desired_width: f32,
         desired_height: f32,
+        preview_dpi: u32,
     ) -> WindowsResult<()> {
         let context = unsafe {
             self.d2d_device
                 .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)?
         };
-        let pixel_width = checked_surface_dimension(desired_width)?;
-        let pixel_height = checked_surface_dimension(desired_height)?;
+        let preview_dpi = preview_dpi.max(96) as f32;
+        let pixel_width = checked_surface_dimension(desired_width * preview_dpi / 96.0)?;
+        let pixel_height = checked_surface_dimension(desired_height * preview_dpi / 96.0)?;
         let description = D3D11_TEXTURE2D_DESC {
             Width: pixel_width,
             Height: pixel_height,
@@ -420,18 +433,13 @@ impl GraphicsResources {
         let texture = texture.ok_or_else(|| Error::from_hresult(E_FAIL))?;
         let surface: IDXGISurface = texture.cast()?;
 
-        // Giving the bitmap a DPI derived from the requested pixel size makes
-        // its D2D coordinate space equal to the physical page size in DIPs.
-        // The same unscaled coordinates can therefore render preview and XPS.
-        let dpi_x = pixel_width as f32 / layout.geometry.page_width * 96.0;
-        let dpi_y = pixel_height as f32 / layout.geometry.page_height * 96.0;
         let properties = D2D1_BITMAP_PROPERTIES1 {
             pixelFormat: D2D1_PIXEL_FORMAT {
                 format: DXGI_FORMAT_B8G8R8A8_UNORM,
                 alphaMode: D2D1_ALPHA_MODE_IGNORE,
             },
-            dpiX: dpi_x,
-            dpiY: dpi_y,
+            dpiX: preview_dpi,
+            dpiY: preview_dpi,
             bitmapOptions: D2D1_BITMAP_OPTIONS(
                 D2D1_BITMAP_OPTIONS_TARGET.0 | D2D1_BITMAP_OPTIONS_CANNOT_DRAW.0,
             ),
@@ -440,6 +448,9 @@ impl GraphicsResources {
         let target = unsafe { context.CreateBitmapFromDxgiSurface(&surface, Some(&properties))? };
         unsafe {
             context.SetTarget(&target);
+            let scale = (desired_width / layout.geometry.page_width)
+                .min(desired_height / layout.geometry.page_height);
+            context.SetTransform(&Matrix3x2::scale(scale, scale));
             context.BeginDraw();
         }
         let draw_result = self.draw_page_contents(&context, layout, (page_number - 1) as usize);
@@ -449,7 +460,7 @@ impl GraphicsResources {
         }
         draw_result?;
         end_result?;
-        unsafe { preview.DrawPage(page_number, &surface, dpi_x, dpi_y) }
+        unsafe { preview.DrawPage(page_number, &surface, preview_dpi, preview_dpi) }
     }
 
     fn print_document(
@@ -467,9 +478,19 @@ impl GraphicsResources {
             rasterDPI: layout.geometry.dpi_x.min(layout.geometry.dpi_y).max(96) as f32,
             colorSpace: D2D1_COLOR_SPACE_SRGB,
         };
+        // IWIC's factory projection is apartment-bound in windows-rs. Create
+        // and consume it within this callback rather than sharing it through
+        // the agile document source.
+        let wic_factory: IWICImagingFactory = unsafe {
+            CoCreateInstance(
+                &CLSID_WICImagingFactory,
+                None::<&windows::core::IUnknown>,
+                CLSCTX_INPROC_SERVER,
+            )?
+        };
         let print_control = unsafe {
             self.d2d_device
-                .CreatePrintControl(&self.wic_factory, target, Some(&properties))?
+                .CreatePrintControl(&wic_factory, target, Some(&properties))?
         };
 
         let render_result: WindowsResult<()> = (|| {
@@ -550,7 +571,7 @@ fn create_text_format(
         face.extend("Consolas".encode_utf16());
     }
     face.push(0);
-    let locale: Vec<u16> = "en-US\0".encode_utf16().collect();
+    let locale = user_locale_name();
     let point_size = (font.point_size_tenths.max(1) as f32 / 10.0) * (96.0 / 72.0);
     let style = if font.logical.lfItalic != 0 {
         DWRITE_FONT_STYLE_ITALIC
@@ -574,6 +595,17 @@ fn create_text_format(
     };
     unsafe { format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)? };
     Ok(format)
+}
+
+fn user_locale_name() -> Vec<u16> {
+    let mut locale = vec![0u16; LOCALE_NAME_MAX_LENGTH as usize];
+    let length = unsafe { GetUserDefaultLocaleName(locale.as_mut_ptr(), locale.len() as i32) };
+    if length > 0 {
+        locale.truncate(length as usize);
+        locale
+    } else {
+        "en-US\0".encode_utf16().collect()
+    }
 }
 
 fn create_layout(
@@ -718,12 +750,71 @@ pub(crate) fn shutdown() {
     });
 }
 
+struct PrintSessionReservation {
+    owner: isize,
+}
+
+impl Drop for PrintSessionReservation {
+    fn drop(&mut self) {
+        ACTIVE_PRINT_WINDOWS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.owner);
+    }
+}
+
+fn begin_print_session(owner: isize) -> Option<PrintSessionReservation> {
+    let mut active = ACTIVE_PRINT_WINDOWS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    active
+        .insert(owner)
+        .then(|| PrintSessionReservation { owner })
+}
+
+struct PendingPrintSession {
+    manager: PrintManager,
+    token: i64,
+    _reservation: PrintSessionReservation,
+}
+
+struct PrintSessionCleanup {
+    pending: Mutex<Option<PendingPrintSession>>,
+}
+
+impl PrintSessionCleanup {
+    fn new(manager: PrintManager, token: i64, reservation: PrintSessionReservation) -> Self {
+        Self {
+            pending: Mutex::new(Some(PendingPrintSession {
+                manager,
+                token,
+                _reservation: reservation,
+            })),
+        }
+    }
+
+    fn finish(&self) {
+        let pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some(pending) = pending {
+            let _ = pending.manager.RemovePrintTaskRequested(pending.token);
+        }
+    }
+}
+
 pub(super) fn show_print_ui(
     owner: HWND,
     text: &[u16],
     font: FontChoice,
     display_name: &OsStr,
 ) -> Result<(), ModernPrintError> {
+    let owner_value = owner as isize;
+    let Some(reservation) = begin_print_session(owner_value) else {
+        return Ok(());
+    };
     initialize_winrt().map_err(classify_setup_error)?;
     match PrintManager::IsSupported() {
         Ok(true) => {}
@@ -735,11 +826,11 @@ pub(super) fn show_print_ui(
         text: text.to_vec(),
         font,
         display_name: display_name.to_string_lossy().into_owned(),
+        preview_dpi: unsafe { GetDpiForWindow(owner) }.max(96),
     });
     let factory: IPrintManagerInterop = unsafe {
         RoGetActivationFactory(&HSTRING::from(PRINT_MANAGER_CLASS)).map_err(classify_setup_error)?
     };
-    let owner_value = owner as isize;
     let owner = WindowsHwnd(owner);
     let manager: PrintManager =
         unsafe { factory.GetForWindow(owner) }.map_err(classify_setup_error)?;
@@ -767,25 +858,31 @@ pub(super) fn show_print_ui(
     let token = manager
         .PrintTaskRequested(&requested)
         .map_err(ModernPrintError::Failed)?;
+    let cleanup = Arc::new(PrintSessionCleanup::new(
+        manager.clone(),
+        token,
+        reservation,
+    ));
     let operation: IAsyncOperation<bool> = match unsafe { factory.ShowPrintUIForWindowAsync(owner) }
     {
         Ok(operation) => operation,
         Err(error) => {
-            let _ = manager.RemovePrintTaskRequested(token);
+            cleanup.finish();
             return Err(classify_setup_error(error));
         }
     };
 
-    let cleanup_manager = manager.clone();
-    let completion = AsyncOperationCompletedHandler::new(move |operation, status| {
-        let _ = cleanup_manager.RemovePrintTaskRequested(token);
-        if status == AsyncStatus::Error {
-            let _ = operation.ok()?.GetResults();
+    let completion_cleanup = Arc::clone(&cleanup);
+    if let Err(error) = operation.when(move |result: WindowsResult<bool>| {
+        completion_cleanup.finish();
+        match result {
+            Ok(true) => {}
+            Ok(false) | Err(_) => {
+                post_async_failure(owner_value as HWND, AsyncPrintFailure::Initialization);
+            }
         }
-        Ok(())
-    });
-    if let Err(error) = operation.SetCompleted(&completion) {
-        let _ = manager.RemovePrintTaskRequested(token);
+    }) {
+        cleanup.finish();
         return Err(ModernPrintError::Failed(error));
     }
     Ok(())
@@ -825,10 +922,7 @@ fn register_task_completion(task: &PrintTask, owner: isize) -> WindowsResult<()>
         TypedEventHandler::<PrintTask, PrintTaskCompletedEventArgs>::new(move |_task, args| {
             let args = args.ok()?;
             if args.Completion()? == PrintTaskCompletion::Failed {
-                let title = localized_string(IDS_APP_NAME);
-                let detail = localized_string(IDS_PRINT_RENDER_FAILED);
-                let message = localized_error(IDS_PRINT_JOB_FAILED, detail);
-                dialogs::show_error(Some(owner as HWND), &title, &message);
+                post_async_failure(owner as HWND, AsyncPrintFailure::Rendering);
             }
             Ok(())
         });
@@ -838,17 +932,72 @@ fn register_task_completion(task: &PrintTask, owner: isize) -> WindowsResult<()>
 
 fn classify_setup_error(error: Error) -> ModernPrintError {
     let code = error.code();
-    if code == E_NOINTERFACE || code == REGDB_E_CLASSNOTREG {
+    if modern_print_unavailable(code) {
         ModernPrintError::Unavailable
     } else {
         ModernPrintError::Failed(error)
     }
 }
 
+fn modern_print_unavailable(code: HRESULT) -> bool {
+    code == E_NOINTERFACE
+        || code == E_NOTIMPL
+        || code == REGDB_E_CLASSNOTREG
+        || code == RO_E_METADATA_NAME_NOT_FOUND
+        || code == HRESULT::from_win32(ERROR_NOT_SUPPORTED.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use windows::Foundation::{Rect, Size};
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn shared_graphics_resources_are_send_and_sync() {
+        assert_send_sync::<GraphicsResources>();
+        assert_send_sync::<DocumentSource>();
+    }
+
+    #[test]
+    fn print_session_guard_rejects_overlap_and_resets_on_drop() {
+        let owner = 0x4E50_4353_isize;
+        let first = begin_print_session(owner).expect("first session should start");
+        assert!(begin_print_session(owner).is_none());
+        drop(first);
+        assert!(begin_print_session(owner).is_some());
+    }
+
+    #[test]
+    fn preview_surface_uses_display_dpi_at_common_scaling_levels() {
+        let desired_width = 408.0;
+        assert_eq!(
+            checked_surface_dimension(desired_width * 96.0 / 96.0).unwrap(),
+            408
+        );
+        assert_eq!(
+            checked_surface_dimension(desired_width * 144.0 / 96.0).unwrap(),
+            612
+        );
+        assert_eq!(
+            checked_surface_dimension(desired_width * 192.0 / 96.0).unwrap(),
+            816
+        );
+    }
+
+    #[test]
+    fn fallback_hresult_classification_is_narrow() {
+        assert!(modern_print_unavailable(E_NOINTERFACE));
+        assert!(modern_print_unavailable(E_NOTIMPL));
+        assert!(modern_print_unavailable(REGDB_E_CLASSNOTREG));
+        assert!(modern_print_unavailable(RO_E_METADATA_NAME_NOT_FOUND));
+        assert!(modern_print_unavailable(HRESULT::from_win32(
+            ERROR_NOT_SUPPORTED.0
+        )));
+        assert!(!modern_print_unavailable(E_FAIL));
+        assert!(!modern_print_unavailable(E_INVALIDARG));
+    }
 
     #[test]
     fn page_description_uses_imageable_rect_and_quarter_inch_margin() {
@@ -907,6 +1056,60 @@ mod tests {
             })
             .is_none()
         );
+    }
+
+    #[test]
+    fn orientation_and_media_size_changes_produce_new_layout_geometry() {
+        let portrait = geometry_from_page_description(PrintPageDescription {
+            PageSize: Size {
+                Width: 816.0,
+                Height: 1056.0,
+            },
+            ImageableRect: Rect {
+                X: 12.0,
+                Y: 18.0,
+                Width: 792.0,
+                Height: 1020.0,
+            },
+            DpiX: 600,
+            DpiY: 600,
+        })
+        .unwrap();
+        let landscape = geometry_from_page_description(PrintPageDescription {
+            PageSize: Size {
+                Width: 1056.0,
+                Height: 816.0,
+            },
+            ImageableRect: Rect {
+                X: 18.0,
+                Y: 12.0,
+                Width: 1020.0,
+                Height: 792.0,
+            },
+            DpiX: 600,
+            DpiY: 600,
+        })
+        .unwrap();
+        let smaller_media = geometry_from_page_description(PrintPageDescription {
+            PageSize: Size {
+                Width: 576.0,
+                Height: 864.0,
+            },
+            ImageableRect: Rect {
+                X: 12.0,
+                Y: 12.0,
+                Width: 552.0,
+                Height: 840.0,
+            },
+            DpiX: 600,
+            DpiY: 600,
+        })
+        .unwrap();
+
+        assert_ne!(portrait, landscape);
+        assert_ne!(portrait, smaller_media);
+        assert!(landscape.content_width > portrait.content_width);
+        assert!(smaller_media.content_width < portrait.content_width);
     }
 
     #[test]
