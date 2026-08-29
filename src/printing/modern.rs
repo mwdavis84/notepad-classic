@@ -68,7 +68,7 @@ use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 
 use crate::app::FontChoice;
 
-use super::{AsyncPrintFailure, PrintedPage, paginate, post_async_failure};
+use super::{AsyncPrintFailure, PaginatedText, paginate, post_async_failure};
 
 const PRINT_MANAGER_CLASS: &str = "Windows.Graphics.Printing.PrintManager";
 const JOB_PAGE_APPLICATION_DEFINED: u32 = u32::MAX;
@@ -90,12 +90,28 @@ pub(super) enum ModernPrintError {
     Failed(Error),
 }
 
-#[derive(Clone)]
 struct DocumentSnapshot {
-    text: Vec<u16>,
+    text: Mutex<Arc<Vec<u16>>>,
     font: FontChoice,
     display_name: String,
     preview_dpi: u32,
+}
+
+impl DocumentSnapshot {
+    fn text(&self) -> WindowsResult<Arc<Vec<u16>>> {
+        self.text
+            .lock()
+            .map(|text| Arc::clone(&text))
+            .map_err(|_| Error::from_hresult(E_FAIL))
+    }
+
+    fn make_text_authoritative(&self, text: Arc<Vec<u16>>) -> WindowsResult<()> {
+        let mut current = self.text.lock().map_err(|_| Error::from_hresult(E_FAIL))?;
+        if !Arc::ptr_eq(&current, &text) {
+            *current = text;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -110,11 +126,10 @@ struct ModernPageGeometry {
     dpi_y: u32,
 }
 
-#[derive(Clone)]
 struct PrintLayout {
     geometry: ModernPageGeometry,
     line_height: f32,
-    pages: Vec<PrintedPage>,
+    document: PaginatedText,
 }
 
 struct GraphicsResources {
@@ -127,9 +142,21 @@ struct GraphicsResources {
 }
 
 struct DocumentState {
+    snapshot: Option<Arc<DocumentSnapshot>>,
     preview_target: Option<AgileReference<IPrintPreviewDxgiPackageTarget>>,
     graphics: Option<Arc<GraphicsResources>>,
-    layout: Option<PrintLayout>,
+    layout: Option<Arc<PrintLayout>>,
+}
+
+impl DocumentState {
+    fn new(snapshot: Arc<DocumentSnapshot>) -> Self {
+        Self {
+            snapshot: Some(snapshot),
+            preview_target: None,
+            graphics: None,
+            layout: None,
+        }
+    }
 }
 
 #[windows::core::implement(
@@ -138,29 +165,33 @@ struct DocumentState {
     IPrintPreviewPageCollection
 )]
 struct DocumentSource {
-    snapshot: Arc<DocumentSnapshot>,
-    state: Mutex<DocumentState>,
+    state: Arc<Mutex<DocumentState>>,
 }
 
 impl DocumentSource {
-    fn new(snapshot: Arc<DocumentSnapshot>) -> Self {
-        Self {
-            snapshot,
-            state: Mutex::new(DocumentState {
-                preview_target: None,
-                graphics: None,
-                layout: None,
-            }),
-        }
+    fn new(state: Arc<Mutex<DocumentState>>) -> Self {
+        Self { state }
     }
 
     fn state(&self) -> WindowsResult<MutexGuard<'_, DocumentState>> {
         self.state.lock().map_err(|_| Error::from_hresult(E_FAIL))
     }
 
-    fn ensure_graphics(&self, state: &mut DocumentState) -> WindowsResult<Arc<GraphicsResources>> {
+    fn snapshot(&self) -> WindowsResult<Arc<DocumentSnapshot>> {
+        self.state()?
+            .snapshot
+            .as_ref()
+            .map(Arc::clone)
+            .ok_or_else(|| Error::from_hresult(E_FAIL))
+    }
+
+    fn ensure_graphics(
+        &self,
+        state: &mut DocumentState,
+        font: FontChoice,
+    ) -> WindowsResult<Arc<GraphicsResources>> {
         if state.graphics.is_none() {
-            state.graphics = Some(Arc::new(GraphicsResources::new(self.snapshot.font)?));
+            state.graphics = Some(Arc::new(GraphicsResources::new(font)?));
         }
         Ok(Arc::clone(
             state.graphics.as_ref().expect("graphics was initialized"),
@@ -170,18 +201,28 @@ impl DocumentSource {
     fn layout_for_options(
         &self,
         options: &windows::core::IInspectable,
-    ) -> WindowsResult<PrintLayout> {
+    ) -> WindowsResult<Arc<PrintLayout>> {
+        let snapshot = self.snapshot()?;
         let options: IPrintTaskOptionsCore = options.cast()?;
         // This document uses one uniform layout for every page. Page zero is
         // the generic description used by Microsoft's current Printing sample;
         // per-page descriptions are unnecessary until page-specific tickets or
         // layouts are supported here.
         let description = options.GetPageDescription(0)?;
+        let geometry = geometry_from_page_description(description)
+            .ok_or_else(|| Error::from_hresult(E_INVALIDARG))?;
         let graphics = {
             let mut state = self.state()?;
-            self.ensure_graphics(&mut state)?
+            if let Some(layout) = &state.layout {
+                if layout.geometry == geometry {
+                    return Ok(Arc::clone(layout));
+                }
+            }
+            self.ensure_graphics(&mut state, snapshot.font)?
         };
-        create_layout(&self.snapshot, &graphics, description)
+        let layout = Arc::new(create_layout(&snapshot, &graphics, geometry)?);
+        self.state()?.layout = Some(Arc::clone(&layout));
+        Ok(layout)
     }
 }
 
@@ -210,11 +251,15 @@ impl IPrintDocumentPageSource_Impl for DocumentSource_Impl {
         let options = print_task_options.ok()?;
         let target = document_target.ok()?;
         let layout = self.layout_for_options(options)?;
-        let page_indices = selected_page_indices(options, layout.pages.len())?;
+        let page_indices = selected_page_indices(options, layout.document.pages.len())?;
         let graphics = {
             let mut state = self.state()?;
-            state.layout = Some(layout.clone());
-            self.ensure_graphics(&mut state)?
+            let font = state
+                .snapshot
+                .as_ref()
+                .ok_or_else(|| Error::from_hresult(E_FAIL))?
+                .font;
+            self.ensure_graphics(&mut state, font)?
         };
         graphics.print_document(target, &layout, &page_indices)
     }
@@ -229,8 +274,7 @@ impl IPrintPreviewPageCollection_Impl for DocumentSource_Impl {
         let options = print_task_options.ok()?;
         let layout = self.layout_for_options(options)?;
         let preview = {
-            let mut state = self.state()?;
-            state.layout = Some(layout.clone());
+            let state = self.state()?;
             state
                 .preview_target
                 .as_ref()
@@ -239,7 +283,7 @@ impl IPrintPreviewPageCollection_Impl for DocumentSource_Impl {
         };
         unsafe {
             preview.InvalidatePreview()?;
-            preview.SetJobPageCount(FinalPageCount, layout.pages.len() as u32)?;
+            preview.SetJobPageCount(FinalPageCount, layout.document.pages.len() as u32)?;
         }
         Ok(())
     }
@@ -254,21 +298,23 @@ impl IPrintPreviewPageCollection_Impl for DocumentSource_Impl {
         } else {
             desired_job_page
         };
+        let snapshot = self.snapshot()?;
         let (layout, preview, graphics) = {
             let mut state = self.state()?;
             let layout = state
                 .layout
-                .clone()
+                .as_ref()
+                .map(Arc::clone)
                 .ok_or_else(|| Error::from_hresult(E_FAIL))?;
             let preview = state
                 .preview_target
                 .as_ref()
                 .ok_or_else(|| Error::from_hresult(E_FAIL))?;
             let preview = preview.resolve()?;
-            let graphics = self.ensure_graphics(&mut state)?;
+            let graphics = self.ensure_graphics(&mut state, snapshot.font)?;
             (layout, preview, graphics)
         };
-        if page_number == 0 || page_number as usize > layout.pages.len() {
+        if page_number == 0 || page_number as usize > layout.document.pages.len() {
             return Err(Error::from_hresult(E_INVALIDARG));
         }
         graphics.draw_preview(
@@ -277,7 +323,7 @@ impl IPrintPreviewPageCollection_Impl for DocumentSource_Impl {
             page_number,
             width,
             height,
-            self.snapshot.preview_dpi,
+            snapshot.preview_dpi,
         )
     }
 }
@@ -370,11 +416,13 @@ impl GraphicsResources {
         unsafe { context.Clear(Some(&white)) };
         let brush = unsafe { context.CreateSolidColorBrush(&black, None)? };
         let page = layout
+            .document
             .pages
             .get(page_index)
             .ok_or_else(|| Error::from_hresult(E_INVALIDARG))?;
 
         for (line_index, line) in page.lines.iter().enumerate() {
+            let line = layout.document.line(*line);
             if line.is_empty() {
                 continue;
             }
@@ -611,24 +659,26 @@ fn user_locale_name() -> Vec<u16> {
 fn create_layout(
     snapshot: &DocumentSnapshot,
     graphics: &GraphicsResources,
-    description: PrintPageDescription,
+    geometry: ModernPageGeometry,
 ) -> WindowsResult<PrintLayout> {
-    let geometry = geometry_from_page_description(description)
-        .ok_or_else(|| Error::from_hresult(E_INVALIDARG))?;
     let line_height = graphics.line_height()?;
     let max_width = (geometry.content_width * LAYOUT_SCALE).round().max(1.0) as i32;
     let lines_per_page = (geometry.content_height / line_height).floor().max(1.0) as usize;
-    let pages = paginate(&snapshot.text, max_width, lines_per_page, |text| {
+    let document = paginate(snapshot.text()?, max_width, lines_per_page, |text| {
         graphics
             .measure_width(text)
             .ok()
             .map(|width| (width * LAYOUT_SCALE).round().max(0.0) as i32)
     })
     .ok_or_else(|| Error::from_hresult(E_FAIL))?;
+    // Tab expansion makes the paginated backing the canonical immutable text.
+    // Reusing it for later geometry changes releases the original snapshot and
+    // avoids retaining two document-sized allocations throughout the session.
+    snapshot.make_text_authoritative(Arc::clone(&document.text))?;
     Ok(PrintLayout {
         geometry,
         line_height,
-        pages,
+        document,
     })
 }
 
@@ -807,7 +857,7 @@ impl PrintSessionCleanup {
 
 pub(super) fn show_print_ui(
     owner: HWND,
-    text: &[u16],
+    text: Arc<Vec<u16>>,
     font: FontChoice,
     display_name: &OsStr,
 ) -> Result<(), ModernPrintError> {
@@ -823,7 +873,7 @@ pub(super) fn show_print_ui(
     }
 
     let snapshot = Arc::new(DocumentSnapshot {
-        text: text.to_vec(),
+        text: Mutex::new(text),
         font,
         display_name: display_name.to_string_lossy().into_owned(),
         preview_dpi: unsafe { GetDpiForWindow(owner) }.max(96),
@@ -840,10 +890,11 @@ pub(super) fn show_print_ui(
         move |_sender, args| {
             let args = args.ok()?;
             let request = args.Request()?;
-            let source_snapshot = Arc::clone(&snapshot);
+            let session = Arc::new(Mutex::new(DocumentState::new(Arc::clone(&snapshot))));
+            let source_session = Arc::clone(&session);
             let source_requested = PrintTaskSourceRequestedHandler::new(move |args| {
                 let source: IPrintDocumentSource =
-                    DocumentSource::new(Arc::clone(&source_snapshot)).into();
+                    DocumentSource::new(Arc::clone(&source_session)).into();
                 args.ok()?.SetSource(&source)
             });
             let task = request.CreatePrintTask(
@@ -851,7 +902,7 @@ pub(super) fn show_print_ui(
                 &source_requested,
             )?;
             enable_page_ranges(&task)?;
-            register_task_completion(&task, owner_value)?;
+            register_task_completion(&task, owner_value, session)?;
             Ok(())
         }
     });
@@ -917,17 +968,40 @@ fn enable_page_ranges(task: &PrintTask) -> WindowsResult<()> {
     Ok(())
 }
 
-fn register_task_completion(task: &PrintTask, owner: isize) -> WindowsResult<()> {
+fn register_task_completion(
+    task: &PrintTask,
+    owner: isize,
+    session: Arc<Mutex<DocumentState>>,
+) -> WindowsResult<()> {
     let completed =
         TypedEventHandler::<PrintTask, PrintTaskCompletedEventArgs>::new(move |_task, args| {
             let args = args.ok()?;
-            if args.Completion()? == PrintTaskCompletion::Failed {
+            let completion = args.Completion();
+            release_document_session(&session);
+            if completion? == PrintTaskCompletion::Failed {
                 post_async_failure(owner as HWND, AsyncPrintFailure::Rendering);
             }
             Ok(())
         });
     task.Completed(&completed)?;
     Ok(())
+}
+
+fn release_document_session(session: &Mutex<DocumentState>) {
+    let released = {
+        let mut state = session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (
+            state.snapshot.take(),
+            state.preview_target.take(),
+            state.graphics.take(),
+            state.layout.take(),
+        )
+    };
+    // Dropping COM and graphics objects may call external code. Do it only
+    // after releasing the session mutex.
+    drop(released);
 }
 
 fn classify_setup_error(error: Error) -> ModernPrintError {
@@ -958,6 +1032,30 @@ mod tests {
     fn shared_graphics_resources_are_send_and_sync() {
         assert_send_sync::<GraphicsResources>();
         assert_send_sync::<DocumentSource>();
+    }
+
+    #[test]
+    fn expanded_backing_replaces_and_releases_the_original_snapshot() {
+        let original = Arc::new(vec![b'a' as u16, b'\t' as u16, b'b' as u16]);
+        let original_weak = Arc::downgrade(&original);
+        let snapshot = DocumentSnapshot {
+            text: Mutex::new(Arc::clone(&original)),
+            font: FontChoice {
+                logical: unsafe { std::mem::zeroed() },
+                point_size_tenths: 100,
+            },
+            display_name: String::new(),
+            preview_dpi: 96,
+        };
+        drop(original);
+
+        let expanded = Arc::new("a       b".encode_utf16().collect());
+        snapshot
+            .make_text_authoritative(Arc::clone(&expanded))
+            .unwrap();
+
+        assert!(original_weak.upgrade().is_none());
+        assert!(Arc::ptr_eq(&snapshot.text().unwrap(), &expanded));
     }
 
     #[test]
