@@ -1,0 +1,108 @@
+LANGUAGE 1, 3
+
+IDR_MAIN_MENU MENU
+BEGIN
+    POPUP "ملف(&F)"
+    BEGIN
+        MENUITEM "جديد(&N)\tCtrl+N", ID_FILE_NEW
+        MENUITEM "فتح(&O)...\tCtrl+O", ID_FILE_OPEN
+        MENUITEM "حفظ(&S)\tCtrl+S", ID_FILE_SAVE
+        MENUITEM "حفظ باسم(&A)...\tCtrl+Shift+S", ID_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM "طباعة(&P)...\tCtrl+P", ID_FILE_PRINT
+        MENUITEM SEPARATOR
+        MENUITEM "خروج(&X)", ID_FILE_EXIT
+    END
+    POPUP "تحرير(&E)"
+    BEGIN
+        MENUITEM "تراجع(&U)\tCtrl+Z", ID_EDIT_UNDO
+        MENUITEM SEPARATOR
+        MENUITEM "قص(&T)\tCtrl+X", ID_EDIT_CUT
+        MENUITEM "نسخ(&C)\tCtrl+C", ID_EDIT_COPY
+        MENUITEM "لصق(&P)\tCtrl+V", ID_EDIT_PASTE
+        MENUITEM "حذف(&L)\tDel", ID_EDIT_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "بحث(&F)...\tCtrl+F", ID_EDIT_FIND
+        MENUITEM "بحث عن التالي(&N)\tF3", ID_EDIT_FIND_NEXT
+        MENUITEM "بحث عن السابق(&V)\tShift+F3", ID_EDIT_FIND_PREVIOUS
+        MENUITEM "استبدال(&R)...\tCtrl+H", ID_EDIT_REPLACE
+        MENUITEM "انتقال إلى(&G)...\tCtrl+G", ID_EDIT_GOTO
+        MENUITEM SEPARATOR
+        MENUITEM "تحديد الكل(&A)\tCtrl+A", ID_EDIT_SELECT_ALL
+        MENUITEM "الوقت/التاريخ(&D)\tF5", ID_EDIT_TIME_DATE
+    END
+    POPUP "تنسيق(&O)"
+    BEGIN
+        MENUITEM "التفاف الكلمات(&W)", ID_FORMAT_WRAP
+        MENUITEM "خط(&F)...", ID_FORMAT_FONT
+    END
+    POPUP "عرض(&V)"
+    BEGIN
+        POPUP "تكبير/تصغير(&Z)"
+        BEGIN
+            MENUITEM "تكبير(&I)\tCtrl++", ID_VIEW_ZOOM_IN
+            MENUITEM "تصغير(&O)\tCtrl+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "استعادة التكبير الافتراضي(&R)\tCtrl+0", ID_VIEW_ZOOM_DEFAULT
+        END
+        MENUITEM "شريط الحالة(&S)", ID_VIEW_STATUS
+    END
+    POPUP "مساعدة(&H)"
+    BEGIN
+        MENUITEM "حول Notepad Classic(&A)", ID_HELP_ABOUT
+    END
+END
+
+STRINGTABLE
+BEGIN
+    IDS_APP_NAME "Notepad Classic"
+    IDS_UNTITLED "بدون عنوان"
+    IDS_WINDOW_TITLE "%1 - Notepad Classic"
+    IDS_SAVE_CHANGES "هل تريد حفظ التغييرات في %1؟"
+    IDS_CREATE_MISSING_FILE "تعذر العثور على الملف %1.\n\nهل تريد إنشاء ملف جديد؟"
+    IDS_COMMAND_LINE_NOT_FILE "مسار سطر الأوامر ليس ملفًا:\n\n%1"
+    IDS_OPEN_FILE_FAILED "تعذر فتح الملف:\n\n%1"
+    IDS_SAVE_FILE_FAILED "تعذر حفظ الملف:\n\n%1"
+    IDS_STATUS_POSITION "سطر %1، عمود %2"
+    IDS_STATUS_ZOOM "%1%%"
+    IDS_GOTO_TITLE "انتقال إلى سطر"
+    IDS_GOTO_LABEL "رقم السطر(&L):"
+    IDS_GOTO_RANGE "يجب أن يكون رقم السطر بين 1 و%1."
+    IDS_FIND_NOT_FOUND "تعذر العثور على ""%1"""
+    IDS_REPLACE_COUNT "المواضع المستبدلة: %1"
+    IDS_ABOUT_TITLE "حول Notepad Classic"
+    IDS_ABOUT_VERSION "Notepad Classic\nالإصدار %1"
+    IDS_ABOUT_PUBLISHER "الناشر: DeekFit\nصادر بموجب ترخيص MIT."
+    IDS_ABOUT_REPOSITORY "مستودع GitHub"
+    IDS_ABOUT_LICENSE "ترخيص MIT"
+    IDS_ABOUT_THREADS "تابع @deekfit_apps على Threads"
+    IDS_CLOSE "إغلاق"
+    IDS_OPEN_LINK_FAILED "تعذر فتح الرابط."
+    IDS_OK "موافق"
+    IDS_CANCEL "إلغاء"
+    IDS_FIND_DIALOG_FAILED "تعذر فتح مربع حوار البحث."
+    IDS_GET_MODULE_FAILED "تعذر الحصول على وحدة التطبيق"
+    IDS_REGISTER_FIND_FAILED "تعذر تسجيل رسالة البحث"
+    IDS_LOAD_ICON_FAILED "تعذر تحميل أيقونة التطبيق"
+    IDS_REGISTER_CLASS_FAILED "تعذر تسجيل فئة النافذة"
+    IDS_CREATE_WINDOW_FAILED "تعذر إنشاء النافذة الرئيسية"
+    IDS_MESSAGE_LOOP_FAILED "فشلت حلقة الرسائل"
+    IDS_CREATE_STATUS_FAILED "تعذر إنشاء شريط الحالة"
+    IDS_CREATE_EDITOR_FAILED "تعذر إنشاء المحرر"
+    IDS_LOAD_MENU_FAILED "تعذر تحميل القائمة المترجمة"
+    IDS_CREATE_ACCELERATORS_FAILED "تعذر إنشاء اختصارات لوحة المفاتيح"
+    IDS_CREATE_FONT_FAILED "تعذر إنشاء الخط"
+    IDS_FILE_DIALOG_FAILED "فشل مربع حوار الملف (خطأ %1)."
+    IDS_FILTER_TEXT_DOCUMENTS "مستندات نصية"
+    IDS_FILTER_ALL_FILES "كل الملفات"
+    IDS_STATUS_EOL_CRLF "Windows (CRLF)"
+    IDS_STATUS_EOL_LF "Unix (LF)"
+    IDS_STATUS_EOL_CR "Macintosh (CR)"
+    IDS_STATUS_ENCODING_UTF8 "UTF-8"
+    IDS_STATUS_ENCODING_UTF8_BOM "UTF-8 مع BOM"
+    IDS_STATUS_ENCODING_UTF16_LE "UTF-16 LE"
+    IDS_PRINT_DIALOG_FAILED "فشل مربع حوار الطباعة (خطأ %1)."
+    IDS_PRINT_JOB_FAILED "تعذر طباعة المستند:\n\n%1"
+    IDS_PRINT_INIT_FAILED "تعذر تهيئة الطابعة."
+    IDS_PRINT_MEASURE_FAILED "تعذر قياس نص المستند للطباعة."
+    IDS_PRINT_RENDER_FAILED "فشلت الطابعة أثناء عرض المستند."
+END

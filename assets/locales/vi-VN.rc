@@ -1,0 +1,108 @@
+LANGUAGE 42, 1
+
+IDR_MAIN_MENU MENU
+BEGIN
+    POPUP "&Tệp"
+    BEGIN
+        MENUITEM "&Mới\tCtrl+N", ID_FILE_NEW
+        MENUITEM "M&ở...\tCtrl+O", ID_FILE_OPEN
+        MENUITEM "&Lưu\tCtrl+S", ID_FILE_SAVE
+        MENUITEM "Lưu &dưới dạng...\tCtrl+Shift+S", ID_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM "&In...\tCtrl+P", ID_FILE_PRINT
+        MENUITEM SEPARATOR
+        MENUITEM "T&hoát", ID_FILE_EXIT
+    END
+    POPUP "&Chỉnh sửa"
+    BEGIN
+        MENUITEM "&Hoàn tác\tCtrl+Z", ID_EDIT_UNDO
+        MENUITEM SEPARATOR
+        MENUITEM "C&ắt\tCtrl+X", ID_EDIT_CUT
+        MENUITEM "&Sao chép\tCtrl+C", ID_EDIT_COPY
+        MENUITEM "&Dán\tCtrl+V", ID_EDIT_PASTE
+        MENUITEM "&Xóa\tDel", ID_EDIT_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "&Tìm...\tCtrl+F", ID_EDIT_FIND
+        MENUITEM "Tìm t&iếp\tF3", ID_EDIT_FIND_NEXT
+        MENUITEM "Tìm t&rước\tShift+F3", ID_EDIT_FIND_PREVIOUS
+        MENUITEM "Tha&y thế...\tCtrl+H", ID_EDIT_REPLACE
+        MENUITEM "&Đi tới...\tCtrl+G", ID_EDIT_GOTO
+        MENUITEM SEPARATOR
+        MENUITEM "Chọn tất &cả\tCtrl+A", ID_EDIT_SELECT_ALL
+        MENUITEM "Giờ/&Ngày\tF5", ID_EDIT_TIME_DATE
+    END
+    POPUP "Định &dạng"
+    BEGIN
+        MENUITEM "&Tự động xuống dòng", ID_FORMAT_WRAP
+        MENUITEM "&Phông chữ...", ID_FORMAT_FONT
+    END
+    POPUP "&Xem"
+    BEGIN
+        POPUP "&Thu phóng"
+        BEGIN
+            MENUITEM "Phóng &to\tCtrl++", ID_VIEW_ZOOM_IN
+            MENUITEM "Thu &nhỏ\tCtrl+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "&Khôi phục thu phóng mặc định\tCtrl+0", ID_VIEW_ZOOM_DEFAULT
+        END
+        MENUITEM "Tha&nh trạng thái", ID_VIEW_STATUS
+    END
+    POPUP "T&rợ giúp"
+    BEGIN
+        MENUITEM "&Giới thiệu về Notepad Classic", ID_HELP_ABOUT
+    END
+END
+
+STRINGTABLE
+BEGIN
+    IDS_APP_NAME "Notepad Classic"
+    IDS_UNTITLED "Không tên"
+    IDS_WINDOW_TITLE "%1 - Notepad Classic"
+    IDS_SAVE_CHANGES "Bạn có muốn lưu các thay đổi cho %1 không?"
+    IDS_CREATE_MISSING_FILE "Không tìm thấy tệp %1.\n\nBạn có muốn tạo tệp mới không?"
+    IDS_COMMAND_LINE_NOT_FILE "Đường dẫn dòng lệnh không phải là tệp:\n\n%1"
+    IDS_OPEN_FILE_FAILED "Không thể mở tệp:\n\n%1"
+    IDS_SAVE_FILE_FAILED "Không thể lưu tệp:\n\n%1"
+    IDS_STATUS_POSITION "Dòng %1, Cột %2"
+    IDS_STATUS_ZOOM "%1%%"
+    IDS_GOTO_TITLE "Đi tới dòng"
+    IDS_GOTO_LABEL "&Số dòng:"
+    IDS_GOTO_RANGE "Số dòng phải nằm trong khoảng từ 1 đến %1."
+    IDS_FIND_NOT_FOUND "Không tìm thấy ""%1"""
+    IDS_REPLACE_COUNT "Số lần đã thay thế: %1"
+    IDS_ABOUT_TITLE "Giới thiệu về Notepad Classic"
+    IDS_ABOUT_VERSION "Notepad Classic\nPhiên bản %1"
+    IDS_ABOUT_PUBLISHER "Nhà phát hành: DeekFit\nĐược phát hành theo Giấy phép MIT."
+    IDS_ABOUT_REPOSITORY "Kho lưu trữ GitHub"
+    IDS_ABOUT_LICENSE "Giấy phép MIT"
+    IDS_ABOUT_THREADS "Theo dõi @deekfit_apps trên Threads"
+    IDS_CLOSE "Đóng"
+    IDS_OPEN_LINK_FAILED "Không thể mở liên kết."
+    IDS_OK "OK"
+    IDS_CANCEL "Hủy"
+    IDS_FIND_DIALOG_FAILED "Không thể mở hộp thoại Tìm kiếm."
+    IDS_GET_MODULE_FAILED "Không thể lấy mô-đun ứng dụng"
+    IDS_REGISTER_FIND_FAILED "Không thể đăng ký thông báo Tìm kiếm"
+    IDS_LOAD_ICON_FAILED "Không thể tải biểu tượng ứng dụng"
+    IDS_REGISTER_CLASS_FAILED "Không thể đăng ký lớp cửa sổ"
+    IDS_CREATE_WINDOW_FAILED "Không thể tạo cửa sổ chính"
+    IDS_MESSAGE_LOOP_FAILED "Vòng lặp thông báo đã thất bại"
+    IDS_CREATE_STATUS_FAILED "Không thể tạo thanh trạng thái"
+    IDS_CREATE_EDITOR_FAILED "Không thể tạo trình soạn thảo"
+    IDS_LOAD_MENU_FAILED "Không thể tải menu đã bản địa hóa"
+    IDS_CREATE_ACCELERATORS_FAILED "Không thể tạo phím tắt"
+    IDS_CREATE_FONT_FAILED "Không thể tạo phông chữ"
+    IDS_FILE_DIALOG_FAILED "Hộp thoại tệp đã thất bại (lỗi %1)."
+    IDS_FILTER_TEXT_DOCUMENTS "Tài liệu Văn bản"
+    IDS_FILTER_ALL_FILES "Mọi Tệp"
+    IDS_STATUS_EOL_CRLF "Windows (CRLF)"
+    IDS_STATUS_EOL_LF "Unix (LF)"
+    IDS_STATUS_EOL_CR "Macintosh (CR)"
+    IDS_STATUS_ENCODING_UTF8 "UTF-8"
+    IDS_STATUS_ENCODING_UTF8_BOM "UTF-8 với BOM"
+    IDS_STATUS_ENCODING_UTF16_LE "UTF-16 LE"
+    IDS_PRINT_DIALOG_FAILED "Hộp thoại in đã thất bại (lỗi %1)."
+    IDS_PRINT_JOB_FAILED "Không thể in tài liệu:\n\n%1"
+    IDS_PRINT_INIT_FAILED "Không thể khởi tạo máy in."
+    IDS_PRINT_MEASURE_FAILED "Không thể đo văn bản tài liệu để in."
+    IDS_PRINT_RENDER_FAILED "Máy in đã thất bại khi kết xuất tài liệu."
+END
