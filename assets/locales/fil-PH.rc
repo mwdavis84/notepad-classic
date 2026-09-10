@@ -1,0 +1,108 @@
+LANGUAGE 100, 1
+
+IDR_MAIN_MENU MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&Bago\tCtrl+N", ID_FILE_NEW
+        MENUITEM "B&uksan...\tCtrl+O", ID_FILE_OPEN
+        MENUITEM "&I-save\tCtrl+S", ID_FILE_SAVE
+        MENUITEM "I-save bi&lang...\tCtrl+Shift+S", ID_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM "I-pri&nt...\tCtrl+P", ID_FILE_PRINT
+        MENUITEM SEPARATOR
+        MENUITEM "Lu&mabas", ID_FILE_EXIT
+    END
+    POPUP "&I-edit"
+    BEGIN
+        MENUITEM "&I-undo\tCtrl+Z", ID_EDIT_UNDO
+        MENUITEM SEPARATOR
+        MENUITEM "&Gupit\tCtrl+X", ID_EDIT_CUT
+        MENUITEM "&Kopya\tCtrl+C", ID_EDIT_COPY
+        MENUITEM "I-p&aste\tCtrl+V", ID_EDIT_PASTE
+        MENUITEM "&Burahin\tDel", ID_EDIT_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "&Hanapin...\tCtrl+F", ID_EDIT_FIND
+        MENUITEM "Hanapin ang &susunod\tF3", ID_EDIT_FIND_NEXT
+        MENUITEM "Hanapin ang &nakaraan\tShift+F3", ID_EDIT_FIND_PREVIOUS
+        MENUITEM "&Palitan...\tCtrl+H", ID_EDIT_REPLACE
+        MENUITEM "Pum&unta sa...\tCtrl+G", ID_EDIT_GOTO
+        MENUITEM SEPARATOR
+        MENUITEM "Piliin ang &lahat\tCtrl+A", ID_EDIT_SELECT_ALL
+        MENUITEM "&Oras/Petsa\tF5", ID_EDIT_TIME_DATE
+    END
+    POPUP "P&ormat"
+    BEGIN
+        MENUITEM "I-&wrap ang mga salita", ID_FORMAT_WRAP
+        MENUITEM "&Font...", ID_FORMAT_FONT
+    END
+    POPUP "&Tingnan"
+    BEGIN
+        POPUP "&Zoom"
+        BEGIN
+            MENUITEM "Palaki&hin\tCtrl++", ID_VIEW_ZOOM_IN
+            MENUITEM "Pali&itin\tCtrl+-", ID_VIEW_ZOOM_OUT
+            MENUITEM "Ibalik ang &default na zoom\tCtrl+0", ID_VIEW_ZOOM_DEFAULT
+        END
+        MENUITEM "&Status bar", ID_VIEW_STATUS
+    END
+    POPUP "T&ulong"
+    BEGIN
+        MENUITEM "&Tungkol sa Notepad Classic", ID_HELP_ABOUT
+    END
+END
+
+STRINGTABLE
+BEGIN
+    IDS_APP_NAME "Notepad Classic"
+    IDS_UNTITLED "Walang pamagat"
+    IDS_WINDOW_TITLE "%1 - Notepad Classic"
+    IDS_SAVE_CHANGES "Gusto mo bang i-save ang mga pagbabago sa %1?"
+    IDS_CREATE_MISSING_FILE "Hindi mahanap ang file na %1.\n\nGusto mo bang gumawa ng bagong file?"
+    IDS_COMMAND_LINE_NOT_FILE "Ang command-line path ay hindi file:\n\n%1"
+    IDS_OPEN_FILE_FAILED "Hindi mabuksan ang file:\n\n%1"
+    IDS_SAVE_FILE_FAILED "Hindi mai-save ang file:\n\n%1"
+    IDS_STATUS_POSITION "Linya %1, Hanay %2"
+    IDS_STATUS_ZOOM "%1%%"
+    IDS_GOTO_TITLE "Pumunta sa Linya"
+    IDS_GOTO_LABEL "&Numero ng linya:"
+    IDS_GOTO_RANGE "Ang numero ng linya ay dapat nasa pagitan ng 1 at %1."
+    IDS_FIND_NOT_FOUND "Hindi mahanap ang ""%1"""
+    IDS_REPLACE_COUNT "Mga napalitan: %1"
+    IDS_ABOUT_TITLE "Tungkol sa Notepad Classic"
+    IDS_ABOUT_VERSION "Notepad Classic\nBersyon %1"
+    IDS_ABOUT_PUBLISHER "Publisher: DeekFit\nInilabas sa ilalim ng Lisensyang MIT."
+    IDS_ABOUT_REPOSITORY "Repository sa GitHub"
+    IDS_ABOUT_LICENSE "Lisensyang MIT"
+    IDS_ABOUT_THREADS "I-follow ang @deekfit_apps sa Threads"
+    IDS_CLOSE "Isara"
+    IDS_OPEN_LINK_FAILED "Hindi mabuksan ang link."
+    IDS_OK "OK"
+    IDS_CANCEL "Kanselahin"
+    IDS_FIND_DIALOG_FAILED "Hindi mabuksan ang dialog na Hanapin."
+    IDS_GET_MODULE_FAILED "Hindi makuha ang module ng application"
+    IDS_REGISTER_FIND_FAILED "Hindi mairehistro ang mensahe ng Paghahanap"
+    IDS_LOAD_ICON_FAILED "Hindi mai-load ang icon ng application"
+    IDS_REGISTER_CLASS_FAILED "Hindi mairehistro ang window class"
+    IDS_CREATE_WINDOW_FAILED "Hindi magawa ang pangunahing window"
+    IDS_MESSAGE_LOOP_FAILED "Nabigo ang message loop"
+    IDS_CREATE_STATUS_FAILED "Hindi magawa ang status bar"
+    IDS_CREATE_EDITOR_FAILED "Hindi magawa ang editor"
+    IDS_LOAD_MENU_FAILED "Hindi mai-load ang naisalokal na menu"
+    IDS_CREATE_ACCELERATORS_FAILED "Hindi magawa ang mga keyboard shortcut"
+    IDS_CREATE_FONT_FAILED "Hindi magawa ang font"
+    IDS_FILE_DIALOG_FAILED "Nabigo ang file dialog (error %1)."
+    IDS_FILTER_TEXT_DOCUMENTS "Mga Text Document"
+    IDS_FILTER_ALL_FILES "Lahat ng File"
+    IDS_STATUS_EOL_CRLF "Windows (CRLF)"
+    IDS_STATUS_EOL_LF "Unix (LF)"
+    IDS_STATUS_EOL_CR "Macintosh (CR)"
+    IDS_STATUS_ENCODING_UTF8 "UTF-8"
+    IDS_STATUS_ENCODING_UTF8_BOM "UTF-8 na may BOM"
+    IDS_STATUS_ENCODING_UTF16_LE "UTF-16 LE"
+    IDS_PRINT_DIALOG_FAILED "Nabigo ang print dialog (error %1)."
+    IDS_PRINT_JOB_FAILED "Hindi mai-print ang dokumento:\n\n%1"
+    IDS_PRINT_INIT_FAILED "Hindi masimulan ang printer."
+    IDS_PRINT_MEASURE_FAILED "Hindi masukat ang teksto ng dokumento para sa pag-print."
+    IDS_PRINT_RENDER_FAILED "Nabigo ang printer habang nire-render ang dokumento."
+END
