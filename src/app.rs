@@ -32,7 +32,8 @@ use windows_sys::Win32::UI::Controls::{
     INITCOMMONCONTROLSEX, InitCommonControlsEx, SB_SETPARTS, SB_SETTEXTW, STATUSCLASSNAMEW,
 };
 use windows_sys::Win32::UI::HiDpi::{
-    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, GetSystemMetricsForDpi,
+    SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     SetFocus, VK_ADD, VK_DELETE, VK_F3, VK_F5, VK_OEM_MINUS, VK_OEM_PLUS, VK_SUBTRACT,
@@ -45,6 +46,7 @@ use crate::file::{self, TextFormat};
 use crate::localization::ids::*;
 use crate::localization::{self, FormatArg};
 use crate::printing;
+use crate::settings;
 use crate::window_placement;
 
 const CLASS_NAME: &[u16] = &[
@@ -172,7 +174,7 @@ impl AppState {
     }
 
     fn status_is_visible(&self) -> bool {
-        self.status_requested.get() && !self.word_wrap.get()
+        self.status_requested.get()
     }
 }
 
@@ -247,6 +249,14 @@ pub fn run() -> Result<(), String> {
 
     let menu = create_menu()?;
     let state = Rc::new(AppState::new(instance, menu, find_message));
+    // Keep construction deterministic for tests and other callers. Only real
+    // application startup reads the user's saved preferences, before controls
+    // are created so their initial styles and font use the restored values.
+    state.word_wrap.set(settings::load_word_wrap());
+    state.status_requested.set(settings::load_status_bar());
+    state
+        .font_choice
+        .set(settings::load_font().unwrap_or_else(default_font_choice));
     let untitled = localization::text(IDS_UNTITLED);
     let title = localization::format(
         IDS_WINDOW_TITLE,
@@ -1100,6 +1110,7 @@ fn toggle_word_wrap(state: &AppState) {
                 DestroyWindow(old_editor);
                 SetFocus(new_editor);
             }
+            settings::save_word_wrap(state.word_wrap.get());
         }
         Err(message) => {
             state.word_wrap.set(!state.word_wrap.get());
@@ -1113,10 +1124,8 @@ fn toggle_word_wrap(state: &AppState) {
 }
 
 fn toggle_status(state: &AppState) {
-    if state.word_wrap.get() {
-        return;
-    }
     state.status_requested.set(!state.status_requested.get());
+    settings::save_status_bar(state.status_requested.get());
     update_menu_state(state);
     layout_children(state);
 }
@@ -1137,22 +1146,13 @@ fn update_menu_state(state: &AppState) {
             state.menu,
             ID_VIEW_STATUS as u32,
             MF_BYCOMMAND
-                | if state.status_requested.get() && !state.word_wrap.get() {
+                | if state.status_requested.get() {
                     MF_CHECKED
                 } else {
                     MF_UNCHECKED
                 },
         );
-        EnableMenuItem(
-            state.menu,
-            ID_VIEW_STATUS as u32,
-            MF_BYCOMMAND
-                | if state.word_wrap.get() {
-                    MF_GRAYED
-                } else {
-                    MF_ENABLED
-                },
-        );
+        EnableMenuItem(state.menu, ID_VIEW_STATUS as u32, MF_BYCOMMAND | MF_ENABLED);
         EnableMenuItem(
             state.menu,
             ID_EDIT_GOTO as u32,
@@ -1222,7 +1222,9 @@ fn update_status(state: &AppState) {
         status,
         localization::without_trailing_nul(&encoding_text),
         dpi,
-    );
+    ) + unsafe { GetSystemMetricsForDpi(SM_CXVSCROLL, dpi) }.max(0);
+    // The final part shares the right edge with the sizing grip. Reserve its
+    // DPI-scaled width in addition to the text and normal cell padding.
 
     let mut status_client: RECT = unsafe { zeroed() };
     unsafe { GetClientRect(status, &mut status_client) };
@@ -1243,10 +1245,7 @@ fn update_status_position(state: &AppState) {
     if !state.status_is_visible() || editor.is_null() || status.is_null() {
         return;
     }
-    let (caret, _) = selection(editor);
-    let line = unsafe { SendMessageW(editor, EM_LINEFROMCHAR, caret as usize, 0) } as i32;
-    let line_start = unsafe { SendMessageW(editor, EM_LINEINDEX, line as usize, 0) } as i32;
-    let column = caret as i32 - line_start.max(0);
+    let (line, column) = editor_position(editor, state.word_wrap.get());
     let text = localization::format(
         IDS_STATUS_POSITION,
         &[
@@ -1255,6 +1254,54 @@ fn update_status_position(state: &AppState) {
         ],
     );
     unsafe { SendMessageW(status, SB_SETTEXTW, 0, text.as_ptr() as isize) };
+}
+
+fn editor_position(editor: HWND, word_wrap: bool) -> (usize, usize) {
+    let (caret, _) = selection(editor);
+    if !word_wrap {
+        let line = unsafe { SendMessageW(editor, EM_LINEFROMCHAR, caret as usize, 0) }.max(0);
+        let start = unsafe { SendMessageW(editor, EM_LINEINDEX, line as usize, 0) }.max(0);
+        return (
+            line as usize,
+            (caret as usize).saturating_sub(start as usize),
+        );
+    }
+
+    // EDIT line messages count visual rows when wrapping. Count actual newline
+    // characters instead so resizing and zooming don't change the position.
+    let length = unsafe { GetWindowTextLengthW(editor) }.max(0) as usize;
+    let end = (caret as usize).min(length);
+    let handle = unsafe { SendMessageW(editor, EM_GETHANDLE, 0, 0) } as *mut c_void;
+    if !handle.is_null() {
+        let text = unsafe { LocalLock(handle) } as *const u16;
+        if !text.is_null() {
+            // SAFETY: the prefix is within the EDIT's UTF-16 buffer, and no
+            // window messages are sent until after it is unlocked.
+            let prefix = unsafe { std::slice::from_raw_parts(text, end) };
+            let position = logical_position(prefix);
+            unsafe { LocalUnlock(handle) };
+            return position;
+        }
+    }
+    let text = get_editor_text_utf16(editor);
+    logical_position(&text[..end.min(text.len())])
+}
+
+fn logical_position(prefix: &[u16]) -> (usize, usize) {
+    let mut line = 0;
+    let mut start = 0;
+    for (index, &unit) in prefix.iter().enumerate() {
+        if unit == b'\r' as u16 {
+            line += 1;
+            start = index + 1;
+        } else if unit == b'\n' as u16 {
+            if index == 0 || prefix[index - 1] != b'\r' as u16 {
+                line += 1;
+            }
+            start = index + 1;
+        }
+    }
+    (line, prefix.len() - start)
 }
 
 fn calculate_status_parts(client_width: i32, right_widths: &[i32]) -> Vec<i32> {
@@ -1332,6 +1379,7 @@ fn choose_font(state: &AppState) {
         return;
     }
     state.font_choice.set(choice);
+    settings::save_font(choice);
 }
 
 fn insert_time_date(state: &AppState) {
@@ -1639,7 +1687,7 @@ fn replace_all_utf16(
     while index < input.len() {
         let matches = index + needle.len() <= input.len()
             && slices_equal(&input[index..index + needle.len()], needle, flags)
-            && (!(flags & FR_WHOLEWORD != 0) || whole_word_at(input, index, needle.len()));
+            && (flags & FR_WHOLEWORD == 0 || whole_word_at(input, index, needle.len()));
         if matches {
             output.extend_from_slice(replacement);
             index += needle.len();
@@ -1772,6 +1820,10 @@ mod tests {
 
     impl TestEditor {
         fn new() -> Self {
+            Self::with_wrap(false)
+        }
+
+        fn with_wrap(wrap: bool) -> Self {
             let static_class = dialogs::to_wide("STATIC");
             let parent = unsafe {
                 CreateWindowExW(
@@ -1797,7 +1849,7 @@ mod tests {
                     0,
                     edit_class.as_ptr(),
                     null(),
-                    WS_CHILD | ES_MULTILINE as u32 | ES_AUTOHSCROLL as u32,
+                    WS_CHILD | ES_MULTILINE as u32 | if wrap { 0 } else { ES_AUTOHSCROLL as u32 },
                     0,
                     0,
                     0,
@@ -1843,6 +1895,122 @@ mod tests {
             "notepad-classic-app-{name}-{}-{sequence}.tmp",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn status_bar_remains_available_with_word_wrap() {
+        let menu = create_menu().unwrap();
+        let state = AppState::new(null_mut(), menu, 0);
+        for wrap in [false, true] {
+            state.word_wrap.set(wrap);
+            for requested in [false, true] {
+                state.status_requested.set(requested);
+                update_menu_state(&state);
+                assert_eq!(state.status_is_visible(), requested);
+                let flags = unsafe { GetMenuState(menu, ID_VIEW_STATUS as u32, MF_BYCOMMAND) };
+                assert_ne!(flags, u32::MAX);
+                assert_eq!(flags & (MF_DISABLED | MF_GRAYED), 0);
+                assert_eq!(flags & MF_CHECKED != 0, requested);
+            }
+        }
+        unsafe { DestroyMenu(menu) };
+    }
+
+    #[test]
+    fn status_encoding_has_room_for_text_and_resize_grip() {
+        use windows_sys::Win32::UI::Controls::{SB_GETRECT, SBARS_SIZEGRIP};
+
+        let controls = INITCOMMONCONTROLSEX {
+            dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_BAR_CLASSES,
+        };
+        unsafe { InitCommonControlsEx(&controls) };
+        let editor = TestEditor::new();
+        let status = unsafe {
+            CreateWindowExW(
+                0,
+                STATUSCLASSNAMEW,
+                null(),
+                WS_CHILD | SBARS_SIZEGRIP,
+                0,
+                0,
+                1000,
+                30,
+                editor.parent,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+            )
+        };
+        assert!(!status.is_null());
+        let state = AppState::new(null_mut(), null_mut(), 0);
+        state.editor.set(editor.editor);
+        state.status.set(status);
+        state.status_requested.set(true);
+        state.dpi.set(unsafe { GetDpiForWindow(status) }.max(96));
+        for width in [600, 1000] {
+            unsafe { MoveWindow(status, 0, 0, width, 30, 0) };
+            for encoding in [
+                file::Encoding::Utf8,
+                file::Encoding::Utf8Bom,
+                file::Encoding::Utf16Le,
+            ] {
+                state.format.set(TextFormat {
+                    encoding,
+                    ..TextFormat::default()
+                });
+                update_status(&state);
+                let mut rect: RECT = unsafe { zeroed() };
+                assert_ne!(
+                    unsafe { SendMessageW(status, SB_GETRECT, 3, &mut rect as *mut RECT as isize) },
+                    0
+                );
+                let label = localization::text(encoding.status_resource_id());
+                let needed = measure_status_text_width(
+                    status,
+                    localization::without_trailing_nul(&label),
+                    state.dpi.get(),
+                );
+                let grip = unsafe { GetSystemMetricsForDpi(SM_CXVSCROLL, state.dpi.get()) };
+                assert!(
+                    width - rect.left >= needed + grip,
+                    "encoding cell must include grip clearance"
+                );
+            }
+        }
+        // TestEditor's parent owns and destroys the status control.
+    }
+
+    #[test]
+    fn wrapped_status_position_tracks_document_lines_across_resizes() {
+        let editor = TestEditor::with_wrap(true);
+        let first = "word ".repeat(40);
+        editor.set_text(&format!("{first}\r\nsecond line"));
+        for width in [100, 200, 600] {
+            unsafe { MoveWindow(editor.editor, 0, 0, width, 200, 0) };
+            assert!(unsafe { SendMessageW(editor.editor, EM_GETLINECOUNT, 0, 0) } > 2);
+            for (caret, expected) in [(150, (0, 150)), (first.len() + 5, (1, 3))] {
+                unsafe { SendMessageW(editor.editor, EM_SETSEL, caret, caret as isize) };
+                assert_eq!(editor_position(editor.editor, true), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn logical_position_counts_newlines_and_utf16_columns() {
+        for (text, expected) in [
+            ("", (0, 0)),
+            ("a\r\nb\r\nc", (2, 1)),
+            ("a\nb\nc", (2, 1)),
+            ("a\rb\rc", (2, 1)),
+            ("a\r\n\r\n", (2, 0)),
+            ("a\r\n😀b", (1, 3)),
+        ] {
+            assert_eq!(
+                logical_position(&text.encode_utf16().collect::<Vec<_>>()),
+                expected
+            );
+        }
     }
 
     #[test]
