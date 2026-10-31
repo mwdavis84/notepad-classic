@@ -133,11 +133,11 @@ impl AppState {
             format: Cell::new(TextFormat::default()),
             dirty: Cell::new(false),
             suppress_change: Cell::new(false),
-            word_wrap: Cell::new(settings::load_word_wrap()),
-            status_requested: Cell::new(settings::load_status_bar()),
+            word_wrap: Cell::new(false),
+            status_requested: Cell::new(true),
             owned_font: Cell::new(null_mut()),
             dpi: Cell::new(96),
-            font_choice: Cell::new(settings::load_font().unwrap_or_else(default_font_choice)),
+            font_choice: Cell::new(default_font_choice()),
             zoom_index: Cell::new(DEFAULT_ZOOM_INDEX),
             wheel_delta_remainder: Cell::new(0),
             find_message,
@@ -249,6 +249,14 @@ pub fn run() -> Result<(), String> {
 
     let menu = create_menu()?;
     let state = Rc::new(AppState::new(instance, menu, find_message));
+    // Keep construction deterministic for tests and other callers. Only real
+    // application startup reads the user's saved preferences, before controls
+    // are created so their initial styles and font use the restored values.
+    state.word_wrap.set(settings::load_word_wrap());
+    state.status_requested.set(settings::load_status_bar());
+    state
+        .font_choice
+        .set(settings::load_font().unwrap_or_else(default_font_choice));
     let untitled = localization::text(IDS_UNTITLED);
     let title = localization::format(
         IDS_WINDOW_TITLE,
