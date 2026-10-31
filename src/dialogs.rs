@@ -12,9 +12,10 @@ use windows_sys::Win32::Graphics::Gdi::{
     UpdateWindow,
 };
 use windows_sys::Win32::UI::Controls::Dialogs::{
-    CF_FORCEFONTEXIST, CF_INITTOLOGFONTSTRUCT, CF_SCREENFONTS, CHOOSEFONTW, ChooseFontW,
-    CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST,
-    OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
+    CF_FORCEFONTEXIST, CF_INITTOLOGFONTSTRUCT, CF_LIMITSIZE, CF_SCREENFONTS, CHOOSEFONTW,
+    ChooseFontW, CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW, OFN_EXPLORER,
+    OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST,
+    OPENFILENAMEW,
 };
 use windows_sys::Win32::UI::Controls::{NM_CLICK, NM_RETURN, NMHDR, NMLINK};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, SystemParametersInfoForDpi};
@@ -129,7 +130,9 @@ pub fn choose_font(owner: HWND, current: &mut LOGFONTW) -> Option<i32> {
     dialog.lStructSize = size_of::<CHOOSEFONTW>() as u32;
     dialog.hwndOwner = owner;
     dialog.lpLogFont = current;
-    dialog.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT | CF_FORCEFONTEXIST;
+    dialog.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT | CF_FORCEFONTEXIST | CF_LIMITSIZE;
+    dialog.nSizeMin = 1;
+    dialog.nSizeMax = crate::settings::MAX_FONT_POINTS;
     // SAFETY: `current` is writable and lives through this synchronous dialog.
     if unsafe { ChooseFontW(&mut dialog) } != 0 {
         Some(dialog.iPointSize)

@@ -5,6 +5,14 @@ Win32 API. The editor is the standard Windows `EDIT` control; there is no GUI
 framework, background service, telemetry, network access, updater, or plugin
 system.
 
+## What's new in 1.4.0
+
+- Font family, style, and size are remembered between runs (fixes #18).
+- Word wrap and status bar preferences are remembered between runs.
+- The status bar works with word wrap enabled, with line and column numbers
+  based on document lines rather than wrapped screen rows.
+- The encoding label has room for the window resize grip at different display scales.
+
 ## Build
 
 Install Rust 1.85 or newer with the MSVC toolchain and the Visual Studio Build
@@ -34,8 +42,12 @@ symbol stripping, and aborting panics. These settings trade a slower build for a
 smaller executable and avoid unwinding machinery without adding runtime work.
 
 The initial editor font is Lucida Console Regular 10 point, matching the classic
-Windows Notepad default. It can be changed for the current run with
-**Format > Font**; version 1 deliberately remembers no settings between runs.
+Windows Notepad default. Change it with **Format > Font**; the selected font,
+style, and point size are remembered for future runs in the current user's
+Windows registry settings, alongside the window position, **Format > Word Wrap**,
+and **View > Status Bar** preferences. The status bar can remain visible with
+word wrap enabled; line and column numbers follow actual document lines rather
+than wrapped screen rows. Zoom remains specific to the current run.
 
 ## Localization
 

@@ -339,7 +339,7 @@ if ($Bundle -or $Target -eq "all") {
     $bundlePath = Join-Path $packageOutputDir $bundleName
 
     Write-Host "Packing MSIX bundle..." -ForegroundColor Cyan
-    & $makeappx bundle /d "$bundleStagingDir" /p "$bundlePath" /o
+    & $makeappx bundle /d "$bundleStagingDir" /p "$bundlePath" /bv "$msixVersion" /o
     if ($LASTEXITCODE -ne 0) {
         Write-Error "makeappx bundle failed with exit code $LASTEXITCODE"
     }
